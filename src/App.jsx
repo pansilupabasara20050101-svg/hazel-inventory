@@ -910,8 +910,28 @@ function AlertSettingsModal({T,settings,onClose,onSave}){
 }
 
 // ── LOW STOCK BANNER ──────────────────────────────────────────────────────────
-function LowStockAlertBanner({T,alertItems,onDismiss,onConfigure}){
+function LowStockAlertBanner({T,alertItems,alertSettings,onDismiss,onConfigure}){
+  const [sending,setSending]=useState(false);
+  const [sent,setSent]=useState(false);
+  const [error,setError]=useState("");
   if(!alertItems.length) return null;
+
+  const sendEmail=async()=>{
+    if(!alertSettings?.email1&&!alertSettings?.email2){onConfigure();return;}
+    setSending(true);setError("");
+    try{
+      const lines=alertItems.map(i=>`  • ${i.name} (${i.code}) — stock: ${i.stock}, min: ${i.minQty}`).join("\n");
+      const res=await fetch("/api/send-alert",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({to1:alertSettings.email1,to2:alertSettings.email2,count:alertItems.length,lines,timestamp:nowStr()}),
+      });
+      if(!res.ok) throw new Error("Server error "+res.status);
+      setSent(true);setTimeout(()=>{setSent(false);onDismiss();},2500);
+    }catch(e){setError("Failed: "+e.message);}
+    setSending(false);
+  };
+
   return(
     <div style={{background:T.warnBg,border:`1px solid ${T.warn}55`,borderRadius:10,padding:"13px 16px",marginBottom:16,display:"flex",gap:12,alignItems:"flex-start"}}>
       <span style={{fontSize:22,flexShrink:0,lineHeight:1,marginTop:2}}>⚠</span>
@@ -925,9 +945,17 @@ function LowStockAlertBanner({T,alertItems,onDismiss,onConfigure}){
           ))}
           {alertItems.length>8&&<span style={{fontSize:11,color:T.muted,fontFamily:MO,alignSelf:"center"}}>+{alertItems.length-8} more</span>}
         </div>
-        <button onClick={onConfigure} style={{background:"transparent",border:`1px solid ${T.warn}55`,borderRadius:7,padding:"6px 12px",color:T.warn,cursor:"pointer",fontFamily:MO,fontSize:11,fontWeight:700}}>
-          ⚙ Configure alert emails
-        </button>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          {(alertSettings?.email1||alertSettings?.email2)&&alertSettings?.enabled?(
+            <button onClick={sendEmail} disabled={sending||sent} style={{background:sent?T.ok:T.warn,border:"none",borderRadius:7,padding:"7px 14px",color:"#fff",cursor:sending||sent?"default":"pointer",fontFamily:MO,fontSize:12,fontWeight:700}}>
+              {sent?"✓ Alert sent!":sending?"Sending…":"📧 Send Alert Email"}
+            </button>
+          ):null}
+          <button onClick={onConfigure} style={{background:"transparent",border:`1px solid ${T.warn}55`,borderRadius:7,padding:"6px 12px",color:T.warn,cursor:"pointer",fontFamily:MO,fontSize:11,fontWeight:700}}>
+            ⚙ {alertSettings?.email1?"Change emails":"Set up alert emails"}
+          </button>
+          {error&&<span style={{fontSize:11,color:T.low,fontFamily:MO}}>{error}</span>}
+        </div>
       </div>
       <button onClick={onDismiss} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:0,flexShrink:0,lineHeight:1,marginTop:2}}>✕</button>
     </div>
@@ -1413,7 +1441,7 @@ export default function App(){
         </div>
       </div>
       <div style={{maxWidth:1440,margin:"0 auto",padding:isMobile?"12px 10px 80px":"24px 16px 60px"}}>
-        {alertBanner.length>0&&<LowStockAlertBanner T={T} alertItems={alertBanner} onDismiss={()=>setAlertBanner([])} onConfigure={()=>setShowAlertSettings(true)}/>}
+        {alertBanner.length>0&&<LowStockAlertBanner T={T} alertItems={alertBanner} alertSettings={alertSettings} onDismiss={()=>setAlertBanner([])} onConfigure={()=>setShowAlertSettings(true)}/>}
         {safeTab==="out"  &&<MovementTab T={T} type="out" items={items} movements={movements} setMovements={setMovements} setItems={setItems} currentUser={currentUser}/>}
         {safeTab==="in"   &&<MovementTab T={T} type="in"  items={items} movements={movements} setMovements={setMovements} setItems={setItems} currentUser={currentUser}/>}
         {safeTab==="inv"  &&<InventoryTab T={T} items={items} setItems={setItems} canEdit={role.canEditItems}/>}
