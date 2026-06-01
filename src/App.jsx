@@ -990,31 +990,28 @@ function AICameraScanner({T,items,onSelect,onClose}){
   },[]);
 
   const identify=async()=>{
-    const vid=videoRef.current;const can=canvasRef.current;
-    if(!vid||!can) return;
-    setAiLoading(true);setAiResult(null);setCamError("");
-    try{
-      can.width=vid.videoWidth||640;can.height=vid.videoHeight||480;
-      can.getContext("2d").drawImage(vid,0,0);
-      const base64=can.toDataURL("image/jpeg",0.85).split(",")[1];
-      const itemList=items.map(i=>`${i.code}: ${i.name} (${i.dept}${i.brand?", "+i.brand:""})`).join("\n");
-      const prompt=`You are an inventory assistant for Hazel Cafe & Cakery. Look at this image and identify which item from the inventory list it shows.\n\nInventory list:\n${itemList}\n\nRespond in JSON only with NO markdown:\n{"found": true/false, "code": "item code or null", "seen": "what you see in the image", "confidence": "high/medium/low"}\n\nIf not found: {"found": false, "code": null, "seen": "description", "suggestion": "closest match name or null"}`;
-      const res=await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:300,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:"image/jpeg",data:base64}},{type:"text",text:prompt}]}]}),
-      });
-      if(!activeRef.current) return;
-      const data=await res.json();
-      const text=data.content?.find(c=>c.type==="text")?.text||"{}";
-      const parsed=JSON.parse(text.replace(/```json|```/g,"").trim());
-      const item=parsed.found?items.find(i=>i.code===parsed.code)||null:null;
-      if(activeRef.current) setAiResult({found:parsed.found,item,parsed});
-    }catch(e){
-      if(activeRef.current) setCamError("AI identification failed: "+e.message);
-    }
-    if(activeRef.current) setAiLoading(false);
-  };
+  const vid=videoRef.current;const can=canvasRef.current;
+  if(!vid||!can) return;
+  setAiLoading(true);setAiResult(null);setCamError("");
+  try{
+    can.width=vid.videoWidth||640;can.height=vid.videoHeight||480;
+    can.getContext("2d").drawImage(vid,0,0);
+    const base64=can.toDataURL("image/jpeg",0.85).split(",")[1];
+    const itemList=items.map(i=>`${i.code}: ${i.name} (${i.dept}${i.brand?", "+i.brand:""})`).join("\n");
+    const resp=await fetch("/api/identify",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({image:base64,items:itemList}),
+    });
+    const data=await resp.json();
+    const code=data.result?.trim();
+    const matched=items.find(i=>i.code===code);
+    setAiResult({code,matched});
+  }catch(e){
+    setCamError("AI error: "+e.message);
+  }
+  setAiLoading(false);
+};
 
   const confirmItem=(item)=>{if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());}onSelect(item);onClose();};
 
