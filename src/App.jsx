@@ -587,10 +587,13 @@ function CreatorStamp({T}){
 }
 
 // ── PURCHASE ORDER ────────────────────────────────────────────────────────────
-function PurchaseOrderTab({T,items}){
+function PurchaseOrderTab({T,items,alertSettings}){
   const isMobile=useIsMobile();
   const [overrides,setOverrides]=useState({});
   const [groupBySupplier,setGroupBySupplier]=useState(false);
+  const [emailSending,setEmailSending]=useState(false);
+  const [emailSent,setEmailSent]=useState(false);
+  const [emailError,setEmailError]=useState("");
   const deficitItems=useMemo(()=>items.filter(i=>i.stock<i.minQty).sort((a,b)=>a.code.localeCompare(b.code)),[items]);
   const getQty=item=>overrides[item.id]!=null?Number(overrides[item.id]):Math.max(0,item.minQty-item.stock);
   const total=deficitItems.reduce((s,i)=>{const q=getQty(i);return s+(i.perUnit&&q?q*i.perUnit:0);},0);
@@ -601,6 +604,22 @@ function PurchaseOrderTab({T,items}){
     deficitItems.forEach(i=>{const s=i.supplier||"No Supplier";if(!map[s]) map[s]=[];map[s].push(i);});
     return Object.entries(map).sort((a,b)=>a[0].localeCompare(b[0])).map(([supplier,items])=>({supplier,items}));
   },[deficitItems,groupBySupplier]);
+
+  const emailPO=async()=>{
+    if(!alertSettings?.email1){alert("Please set up alert emails first (click the 🔔 bell icon).");return;}
+    setEmailSending(true);setEmailError("");
+    try{
+      const lines=deficitItems.map(i=>{const q=getQty(i);return`  • ${i.name} (${i.code}) — need: ${q} ${i.unit}, supplier: ${i.supplier||"—"}`;}).join("\n");
+      const res=await fetch("/api/send-alert",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({to1:alertSettings.email1,to2:alertSettings.email2,count:deficitItems.length,lines,timestamp:nowStr()}),
+      });
+      if(!res.ok) throw new Error("Server error "+res.status);
+      setEmailSent(true);setTimeout(()=>setEmailSent(false),3000);
+    }catch(e){setEmailError("Failed: "+e.message);}
+    setEmailSending(false);
+  };
 
   const printPO=()=>{
     const rows=deficitItems.map(i=>{const q=getQty(i);return`${i.code}\t${i.name}\t${i.dept}\t${i.supplier||"—"}\t${i.unit}\t${i.stock}\t${i.minQty}\t${q}\t${i.perUnit?fmtRs(i.perUnit):"—"}\t${i.perUnit&&q?fmtRs(q*i.perUnit):"—"}`;}).join("\n");
@@ -621,6 +640,10 @@ function PurchaseOrderTab({T,items}){
           {groupBySupplier?"✓ By Supplier":"Group by Supplier"}
         </button>
         <Btn T={T} v="primary" onClick={printPO} disabled={!deficitItems.length}>🖨 Print PO</Btn>
+        <button onClick={emailPO} disabled={emailSending||emailSent||!deficitItems.length} style={{padding:"9px 14px",borderRadius:8,border:"none",background:emailSent?T.ok:T.accent,color:"#fff",cursor:(!deficitItems.length||emailSending||emailSent)?"not-allowed":"pointer",fontFamily:MO,fontSize:12,fontWeight:700,opacity:!deficitItems.length?0.4:1}}>
+          {emailSent?"✓ Sent!":emailSending?"Sending…":"📧 Email PO"}
+        </button>
+        {emailError&&<span style={{fontSize:11,color:T.low,fontFamily:MO}}>{emailError}</span>}
       </div>
       {total>0&&(
         <Card T={T} s={{padding:"15px 20px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -927,7 +950,7 @@ function LowStockAlertBanner({T,alertItems,alertSettings,onDismiss,onConfigure})
         body:JSON.stringify({to1:alertSettings.email1,to2:alertSettings.email2,count:alertItems.length,lines,timestamp:nowStr()}),
       });
       if(!res.ok) throw new Error("Server error "+res.status);
-      setSent(true);setTimeout(()=>{setSent(false);onDismiss();},2500);
+      setSent(true);setTimeout(()=>{setSent(false);onDismiss();},3000);
     }catch(e){setError("Failed: "+e.message);}
     setSending(false);
   };
@@ -1034,24 +1057,17 @@ function AICameraScanner({T,items,onSelect,onClose}){
           {camError&&<div style={{background:T.lowBg,border:`1px solid ${T.low}44`,borderRadius:8,padding:"10px 13px",fontSize:12,color:T.low}}>{camError}</div>}
           {aiResult&&(
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              {aiResult.found&&aiResult.item?(
-                <>
-                  <div style={{background:T.accentDim,border:`1px solid ${T.accent}33`,borderRadius:8,padding:"9px 13px",fontSize:12,color:T.muted}}>
-                    <span style={{fontWeight:700,color:T.accent}}>✦ AI saw: </span>{aiResult.parsed.seen}
-                    {aiResult.parsed.confidence&&<span style={{marginLeft:8,fontSize:10,fontWeight:700,color:aiResult.parsed.confidence==="high"?T.ok:T.warn,background:aiResult.parsed.confidence==="high"?T.okBg:T.warnBg,padding:"1px 6px",borderRadius:4}}>{aiResult.parsed.confidence}</span>}
-                  </div>
-                  <div style={{background:T.okBg,border:`1px solid ${T.ok}44`,borderRadius:10,padding:"14px 16px"}}>
-                    <div style={{fontSize:10,fontWeight:700,color:T.ok,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}>AI Identified</div>
-                    <div style={{fontSize:15,fontWeight:600,color:T.text,fontFamily:SE,marginBottom:6}}>{aiResult.item.name}</div>
-                    <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:12}}>{aiResult.item.code} · {aiResult.item.unit} · Stock: {aiResult.item.stock}</div>
-                    <button onClick={()=>confirmItem(aiResult.item)} style={{width:"100%",background:"#5a9e72",border:"none",borderRadius:8,padding:"11px",color:"#fff",cursor:"pointer",fontFamily:MO,fontWeight:700,fontSize:14}}>✓ Use This Item</button>
-                  </div>
-                </>
+              {aiResult.matched?(
+                <div style={{background:T.okBg,border:`1px solid ${T.ok}44`,borderRadius:10,padding:"14px 16px"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:T.ok,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}>AI Identified</div>
+                  <div style={{fontSize:15,fontWeight:600,color:T.text,fontFamily:SE,marginBottom:6}}>{aiResult.matched.name}</div>
+                  <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:12}}>{aiResult.matched.code} · {aiResult.matched.unit} · Stock: {aiResult.matched.stock}</div>
+                  <button onClick={()=>confirmItem(aiResult.matched)} style={{width:"100%",background:"#5a9e72",border:"none",borderRadius:8,padding:"11px",color:"#fff",cursor:"pointer",fontFamily:MO,fontWeight:700,fontSize:14}}>✓ Use This Item</button>
+                </div>
               ):(
                 <div style={{background:T.warnBg,border:`1px solid ${T.warn}44`,borderRadius:8,padding:"12px 13px",fontSize:12,color:T.warn}}>
                   <div style={{fontWeight:700,marginBottom:4}}>✦ Could not identify</div>
-                  <div style={{color:T.muted}}>{aiResult.parsed.seen}</div>
-                  {aiResult.parsed.suggestion&&<div style={{marginTop:5,color:T.text}}>Closest match: <strong>{aiResult.parsed.suggestion}</strong></div>}
+                  <div style={{color:T.muted,fontSize:11}}>No matching item found. Try again with better lighting.</div>
                 </div>
               )}
               <button onClick={()=>{setAiResult(null);setCamError("");}} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:8,padding:"9px",color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700}}>↺ Try Again</button>
@@ -1444,7 +1460,7 @@ export default function App(){
         {safeTab==="inv"  &&<InventoryTab T={T} items={items} setItems={setItems} canEdit={role.canEditItems}/>}
         {safeTab==="count"&&<ManualCountTab T={T} items={items} setItems={setItems} countHistory={countHistory} setCountHistory={setCountHistory} currentUser={currentUser}/>}
         {safeTab==="var"  &&<VarianceTab T={T} countHistory={countHistory}/>}
-        {safeTab==="po"   &&<PurchaseOrderTab T={T} items={items}/>}
+        {safeTab==="po"   &&<PurchaseOrderTab T={T} items={items} alertSettings={alertSettings}/>}
         {safeTab==="hist" &&<HistoryTab T={T} movements={movements}/>}
         {safeTab==="reports"&&<ReportsTab T={T} movements={movements} countHistory={countHistory}/>}
         {safeTab==="users"&&<UsersTab T={T} users={users} setUsers={setUsers}/>}
