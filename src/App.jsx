@@ -1422,7 +1422,7 @@ export default function App(){
   const empty=items.filter(i=>i.stock<=0).length;
 
   return(
-    <div style={{minHeight:"100vh",background:T.bg,fontFamily:MO,color:T.text,transition:"background 0.25s,color 0.25s"}}>
+    <div style={{minHeight:"100vh",width:"100%",maxWidth:"100vw",overflowX:"hidden",background:T.bg,fontFamily:MO,color:T.text,transition:"background 0.25s,color 0.25s"}}>
       <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
       <div style={{background:T.navBg,borderBottom:`1px solid ${T.navBorder}`,position:"sticky",top:0,zIndex:90,boxShadow:T.shadow}}>
         <div style={{maxWidth:1440,margin:"0 auto",padding:"0 16px"}}>
