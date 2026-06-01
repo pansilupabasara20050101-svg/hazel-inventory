@@ -1,4 +1,3 @@
-
 import { useState, useMemo, useEffect, useRef } from "react";
 import { db } from "./firebase";
 import { doc, setDoc, getDoc, onSnapshot, collection } from "firebase/firestore";
@@ -384,7 +383,7 @@ function MovementTab({T,type,items,movements,setMovements,setItems,currentUser})
 
 // ── INVENTORY ─────────────────────────────────────────────────────────────────
 function ItemModal({T,item,onClose,onSave}){
-  const [f,setF]=useState(item||{code:"",dept:"Front",supplier:"",brand:"",name:"",unit:"Nos",stock:0,minQty:0,perUnit:""});
+  const [f,setF]=useState(item||{code:"",dept:"Front",supplier:"",brand:"",name:"",unit:"Nos",stock:0,minQty:0,perUnit:"",barcode:"",location:"Stores",qtySize:""});
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
   return(
     <div style={{position:"fixed",inset:0,background:"#000a",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -400,8 +399,12 @@ function ItemModal({T,item,onClose,onSave}){
           <div><Label T={T}>Per Unit Price (Rs)</Label><Inp T={T} type="number" value={f.perUnit||""} onChange={v=>set("perUnit",v)} placeholder="0.00"/></div>
           <div><Label T={T}>Current Stock</Label><Inp T={T} type="number" value={f.stock} onChange={v=>set("stock",Number(v))}/></div>
           <div><Label T={T}>Min Qty</Label><Inp T={T} type="number" value={f.minQty} onChange={v=>set("minQty",Number(v))}/></div>
+          <div><Label T={T}>Qty Size (e.g. 1kg, 400g)</Label><Inp T={T} value={f.qtySize||""} onChange={v=>set("qtySize",v)} placeholder="e.g. 1kg"/></div>
+          <div><Label T={T}>Location</Label><Inp T={T} value={f.location||""} onChange={v=>set("location",v)} placeholder="e.g. Stores"/></div>
+          <div style={{gridColumn:"1/-1"}}><Label T={T}>Barcode</Label><Inp T={T} value={f.barcode||""} onChange={v=>set("barcode",v)} placeholder="Scan or type barcode number"/></div>
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+          <Btn T={T} v="danger" onClick={()=>onSave({...f,_delete:true})} s={{marginRight:"auto"}}>Delete</Btn>
           <Btn T={T} onClick={onClose}>Cancel</Btn>
           <Btn T={T} v="primary" onClick={()=>onSave(f)} disabled={!f.name||!f.code}>Save Item</Btn>
         </div>
@@ -455,7 +458,7 @@ function InventoryTab({T,items,setItems,canEdit}){
         </table>
         {filtered.length===0&&<div style={{padding:40,textAlign:"center",color:T.muted,fontStyle:"italic",fontFamily:SE}}>No items found</div>}
       </Card>
-      {canEdit&&(editItem||showAdd)&&<ItemModal T={T} item={editItem} onClose={()=>{setEditItem(null);setShowAdd(false);}} onSave={form=>{if(form.id) setItems(prev=>prev.map(i=>i.id===form.id?form:i));else setItems(prev=>[...prev,{...form,id:form.code||uid()}]);setEditItem(null);setShowAdd(false);}}/>}
+      {canEdit&&(editItem||showAdd)&&<ItemModal T={T} item={editItem} onClose={()=>{setEditItem(null);setShowAdd(false);}} onSave={form=>{if(form._delete){setItems(prev=>prev.filter(i=>i.id!==form.id));}else if(form.id){setItems(prev=>prev.map(i=>i.id===form.id?form:i));}else{setItems(prev=>[...prev,{...form,id:form.code||uid()}]);}setEditItem(null);setShowAdd(false);}}/>}
     </div>
   );
 }
@@ -479,18 +482,60 @@ function ManualCountTab({T,items,setItems,countHistory,setCountHistory,currentUs
     <div>
       <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
         <div style={{flex:1}}><div style={{fontSize:22,fontWeight:600,fontFamily:SE,color:T.text}}>Manual Count</div><div style={{fontSize:12,color:T.muted,marginTop:2,fontFamily:MO}}>Counting as <strong style={{color:T.accent}}>{currentUser.name}</strong> · {counted}/{items.length} items entered</div></div>
-        <Inp T={T} value={search} onChange={setSearch} placeholder="Search…" s={{width:160}}/>
+        <Inp T={T} value={search} onChange={setSearch} placeholder="Search…" s={{width:isMobile?"100%":160}}/>
         <Sel T={T} value={deptF} onChange={setDeptF} s={{minWidth:100}}><option>All</option><option>Front</option><option>Kitchen</option></Sel>
-        <Btn T={T} v="primary" onClick={submit} disabled={counted===0}>Submit Count</Btn>
       </div>
       {submitted&&<div style={{background:T.okBg,border:`1px solid ${T.ok}44`,borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.ok,fontFamily:MO}}>✓ Count submitted — stock updated</div>}
-      <Card T={T}>
-        <table style={{width:"100%",borderCollapse:"collapse",minWidth:isMobile?300:600}}>
-          <thead><tr style={{borderBottom:`1px solid ${T.border}`,background:T.card2}}>{["Code","Item Name","Dept","Unit","System","Physical Count","Variance"].map(h=>(<th key={h} style={{padding:"10px 13px",textAlign:"left",fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",whiteSpace:"nowrap",fontFamily:MO}}>{h}</th>))}</tr></thead>
-          <tbody>{filtered.map((item,idx)=>{const val=counts[item.id];const variance=val!=null&&val!==""?Number(val)-item.stock:null;return(<tr key={item.id} style={{borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none",background:val!=null&&val!==""?T.accentDim:"transparent"}}><td style={{padding:"9px 13px",fontFamily:MO,fontSize:12,color:T.accent,fontWeight:700}}>{item.code}</td><td style={{padding:"9px 13px",fontSize:13,fontWeight:500,color:T.text,fontFamily:SE}}>{item.name}</td><td style={{padding:"9px 13px"}}><DeptBadge T={T} dept={item.dept}/></td><td style={{padding:"9px 13px",fontSize:11,color:T.muted,fontFamily:MO}}>{item.unit}</td><td style={{padding:"9px 13px",fontWeight:700,color:T.muted,fontFamily:MO}}>{item.stock}</td><td style={{padding:"9px 13px"}}><input type="number" value={counts[item.id]||""} onChange={e=>setCounts(p=>({...p,[item.id]:e.target.value}))} placeholder="—" style={{background:T.bg,border:`1px solid ${val!=null&&val!==""?T.accent:T.border}`,borderRadius:6,color:T.text,fontSize:14,padding:"6px 10px",width:80,outline:"none",fontFamily:MO,fontWeight:700,textAlign:"center"}}/></td><td style={{padding:"9px 13px"}}>{variance!=null&&<span style={{fontWeight:700,color:variance>0?T.ok:variance<0?T.low:T.muted,fontFamily:MO}}>{variance>0?"+":""}{variance}</span>}</td></tr>);})}
-          </tbody>
-        </table>
-      </Card>
+      {isMobile?(
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {filtered.map(item=>{
+            const val=counts[item.id];
+            const variance=val!=null&&val!==""?Number(val)-item.stock:null;
+            return(
+              <Card T={T} key={item.id} s={{padding:"12px 14px",background:val!=null&&val!==""?T.accentDim:T.card}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:SE}}>{item.name}</div>
+                    <div style={{display:"flex",gap:6,marginTop:3,alignItems:"center"}}>
+                      <span style={{fontSize:10,fontWeight:700,color:T.accent,fontFamily:MO}}>{item.code}</span>
+                      <DeptBadge T={T} dept={item.dept}/>
+                      <span style={{fontSize:10,color:T.muted,fontFamily:MO}}>{item.unit}</span>
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>SYSTEM</div>
+                    <div style={{fontSize:20,fontWeight:800,color:T.muted,fontFamily:MO}}>{item.stock}</div>
+                  </div>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginBottom:4}}>PHYSICAL COUNT</div>
+                    <input type="number" value={counts[item.id]||""} onChange={e=>setCounts(p=>({...p,[item.id]:e.target.value}))} placeholder="Enter count…" style={{background:T.bg,border:`1px solid ${val!=null&&val!==""?T.accent:T.border}`,borderRadius:8,color:T.text,fontSize:18,padding:"10px 14px",width:"100%",outline:"none",fontFamily:MO,fontWeight:700,boxSizing:"border-box"}}/>
+                  </div>
+                  {variance!=null&&(
+                    <div style={{textAlign:"center",minWidth:50}}>
+                      <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginBottom:4}}>VAR</div>
+                      <div style={{fontSize:18,fontWeight:800,color:variance>0?T.ok:variance<0?T.low:T.muted,fontFamily:MO}}>{variance>0?"+":""}{variance}</div>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            );
+          })}
+          <Btn T={T} v="primary" onClick={submit} disabled={counted===0} s={{width:"100%",padding:"14px",fontSize:15,marginTop:8}}>✓ Submit Count ({counted} items)</Btn>
+        </div>
+      ):(
+        <Card T={T}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr style={{borderBottom:`1px solid ${T.border}`,background:T.card2}}>{["Code","Item Name","Dept","Unit","System","Physical Count","Variance"].map(h=>(<th key={h} style={{padding:"10px 13px",textAlign:"left",fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",whiteSpace:"nowrap",fontFamily:MO}}>{h}</th>))}</tr></thead>
+            <tbody>{filtered.map((item,idx)=>{const val=counts[item.id];const variance=val!=null&&val!==""?Number(val)-item.stock:null;return(<tr key={item.id} style={{borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none",background:val!=null&&val!==""?T.accentDim:"transparent"}}><td style={{padding:"9px 13px",fontFamily:MO,fontSize:12,color:T.accent,fontWeight:700}}>{item.code}</td><td style={{padding:"9px 13px",fontSize:13,fontWeight:500,color:T.text,fontFamily:SE}}>{item.name}</td><td style={{padding:"9px 13px"}}><DeptBadge T={T} dept={item.dept}/></td><td style={{padding:"9px 13px",fontSize:11,color:T.muted,fontFamily:MO}}>{item.unit}</td><td style={{padding:"9px 13px",fontWeight:700,color:T.muted,fontFamily:MO}}>{item.stock}</td><td style={{padding:"9px 13px"}}><input type="number" value={counts[item.id]||""} onChange={e=>setCounts(p=>({...p,[item.id]:e.target.value}))} placeholder="—" style={{background:T.bg,border:`1px solid ${val!=null&&val!==""?T.accent:T.border}`,borderRadius:6,color:T.text,fontSize:14,padding:"6px 10px",width:80,outline:"none",fontFamily:MO,fontWeight:700,textAlign:"center"}}/></td><td style={{padding:"9px 13px"}}>{variance!=null&&<span style={{fontWeight:700,color:variance>0?T.ok:variance<0?T.low:T.muted,fontFamily:MO}}>{variance>0?"+":""}{variance}</span>}</td></tr>);})}
+            </tbody>
+          </table>
+          <div style={{padding:"14px 16px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"flex-end"}}>
+            <Btn T={T} v="primary" onClick={submit} disabled={counted===0}>Submit Count ({counted} items)</Btn>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
