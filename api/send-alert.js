@@ -1,10 +1,10 @@
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const { to1, to2, count, lines, timestamp } = req.body;
   const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'RESEND_API_KEY not configured' });
-  if (!to1) return res.status(400).json({ error: 'No email address provided' });
-  const subject = 'Hazel Inventory - ' + count + ' item' + (count !== 1 ? 's' : '') + ' below minimum stock';
+  if (!apiKey) return res.status(500).json({ error: 'No API key' });
+  if (!to1) return res.status(400).json({ error: 'No email' });
+  const subject = 'Hazel Inventory - ' + count + ' items below minimum stock';
   const html = '<p>' + count + ' items below minimum stock</p><pre>' + lines + '</pre><p>Sent at ' + timestamp + '</p>';
   const recipients = [to1, to2].filter(Boolean);
   try {
