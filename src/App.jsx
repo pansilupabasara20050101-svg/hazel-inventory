@@ -1,3 +1,4 @@
+
 import { useState, useMemo, useEffect, useRef } from "react";
 import { db } from "./firebase";
 import { doc, setDoc, getDoc, onSnapshot, collection } from "firebase/firestore";
@@ -1356,7 +1357,7 @@ export default function App(){
   const [alertSettings,setAlertSettings]=useState({email1:"",email2:"",enabled:true,threshold:"atMin"});
   const [alertBanner,setAlertBanner]=useState([]);
   const [showAlertSettings,setShowAlertSettings]=useState(false);
-  const alertedRef=useRef(new Set());
+  const alertedRef=useRef(new Set(JSON.parse(localStorage.getItem("alertedIds")||"[]")));
   const [ready,setReady]=useState(false);
   const [syncDot,setSyncDot]=useState(false);
 
@@ -1417,7 +1418,7 @@ export default function App(){
       return i.stock<i.minQty;
     };
     const newLow=items.filter(i=>isLow(i)&&!alertedRef.current.has(i.id));
-    if(newLow.length>0){newLow.forEach(i=>alertedRef.current.add(i.id));setAlertBanner(prev=>{const ids=new Set(prev.map(x=>x.id));return[...prev,...newLow.filter(i=>!ids.has(i.id))];});}
+    if(newLow.length>0){newLow.forEach(i=>{alertedRef.current.add(i.id);localStorage.setItem("alertedIds",JSON.stringify([...alertedRef.current]));});setAlertBanner(prev=>{const ids=new Set(prev.map(x=>x.id));return[...prev,...newLow.filter(i=>!ids.has(i.id))];});}
     items.filter(i=>!isLow(i)).forEach(i=>alertedRef.current.delete(i.id));
     setAlertBanner(prev=>prev.filter(i=>{const cur=items.find(x=>x.id===i.id);return cur&&isLow(cur);}));
   },[items,ready,currentUser,alertSettings.threshold]);
