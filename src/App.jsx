@@ -121,7 +121,7 @@ function ItemSearch({T,items,onSelect,value,onChange}){
   const filtered=useMemo(()=>{
     if(!value.trim()) return [];
     const q=value.toLowerCase();
-    return items.filter(i=>i.name.toLowerCase().includes(q)||i.code.toLowerCase().includes(q)||i.dept.toLowerCase().includes(q)).slice(0,12);
+    return items.filter(i=>i.name.toLowerCase().includes(q)||i.code.toLowerCase().includes(q)||i.dept.toLowerCase().includes(q)||(i.barcode&&i.barcode.toLowerCase().includes(q))||(i.brand&&i.brand.toLowerCase().includes(q))).slice(0,12);
   },[items,value]);
   return(
     <div>
@@ -153,6 +153,131 @@ function ItemSearch({T,items,onSelect,value,onChange}){
   );
 }
 
+// ── PIN UNLOCK SCREEN ────────────────────────────────────────────────────────
+function PinUnlock({T,storedUser,onSuccess,onUsePassword}){
+  const [pin,setPin]=useState("");
+  const [error,setError]=useState("");
+  const [shake,setShake]=useState(false);
+  const savedPin=localStorage.getItem("pin_"+storedUser.id);
+
+  const tryBiometric=async()=>{
+    try{
+      if(!window.PublicKeyCredential) return;
+      const challenge=new Uint8Array(32);crypto.getRandomValues(challenge);
+      await navigator.credentials.get({publicKey:{challenge,timeout:60000,userVerification:"required",rpId:window.location.hostname}});
+      onSuccess(storedUser);
+    }catch(e){setError("Biometric failed. Use PIN or password.");}
+  };
+
+  useEffect(()=>{
+    if(window.PublicKeyCredential&&localStorage.getItem("bio_"+storedUser.id)==="1") tryBiometric();
+  },[]);
+
+  const tap=(d)=>{
+    if(d==="del"){setPin(p=>p.slice(0,-1));setError("");return;}
+    const next=pin+d;
+    setPin(next);
+    if(next.length===4){
+      if(next===savedPin){setPin("");onSuccess(storedUser);}
+      else{setError("Wrong PIN");setShake(true);setPin("");setTimeout(()=>setShake(false),500);}
+    }
+  };
+
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20,fontFamily:SE}}>
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <div style={{display:"flex",justifyContent:"center",marginBottom:8}}><HazelLogo T={T} size={44}/></div>
+        <div style={{fontSize:22,fontWeight:600,color:T.accent,letterSpacing:"0.14em",textTransform:"uppercase"}}>Welcome back</div>
+        <div style={{fontSize:14,color:T.muted,marginTop:4,fontFamily:MO}}>{storedUser.name}</div>
+      </div>
+      <div style={{animation:shake?"shake 0.45s ease":"none",display:"flex",flexDirection:"column",alignItems:"center",gap:20,width:"100%",maxWidth:300}}>
+        <div style={{display:"flex",gap:14,marginBottom:4}}>
+          {[0,1,2,3].map(i=>(
+            <div key={i} style={{width:16,height:16,borderRadius:"50%",background:pin.length>i?T.accent:T.border,transition:"background 0.15s"}}/>
+          ))}
+        </div>
+        {error&&<div style={{fontSize:12,color:T.low,fontFamily:MO}}>{error}</div>}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,width:"100%"}}>
+          {["1","2","3","4","5","6","7","8","9","","0","del"].map((d,i)=>(
+            <button key={i} onClick={()=>d&&tap(d)} disabled={!d} style={{height:62,borderRadius:12,border:`1px solid ${T.border}`,background:d?T.card:"transparent",color:T.text,fontSize:d==="del"?18:22,fontWeight:600,cursor:d?"pointer":"default",fontFamily:MO,opacity:d?1:0,transition:"background 0.1s"}}
+              onMouseDown={e=>e.currentTarget.style.background=T.card2} onMouseUp={e=>e.currentTarget.style.background=T.card}>
+              {d==="del"?"⌫":d}
+            </button>
+          ))}
+        </div>
+        {localStorage.getItem("bio_"+storedUser.id)==="1"&&(
+          <button onClick={tryBiometric} style={{background:T.accentDim,border:`1px solid ${T.accent}44`,borderRadius:10,padding:"10px 24px",color:T.accent,cursor:"pointer",fontFamily:MO,fontSize:13,fontWeight:700}}>🔬 Use Fingerprint / Face</button>
+        )}
+        <button onClick={onUsePassword} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,textDecoration:"underline",marginTop:4}}>Use password instead</button>
+      </div>
+    </div>
+  );
+}
+
+// ── PIN SETUP MODAL ───────────────────────────────────────────────────────────
+function PinSetupModal({T,user,onClose,onSave}){
+  const [step,setStep]=useState(1);
+  const [pin1,setPin1]=useState("");
+  const [pin2,setPin2]=useState("");
+  const [error,setError]=useState("");
+  const [bioDone,setBioDone]=useState(false);
+  const current=step===1?pin1:pin2;
+  const setCurrentPin=step===1?setPin1:setPin2;
+
+  const tap=(d)=>{
+    if(d==="del"){setCurrentPin(p=>p.slice(0,-1));setError("");return;}
+    const next=current+d;
+    setCurrentPin(next);
+    if(next.length===4){
+      if(step===1){setTimeout(()=>setStep(2),200);}
+      else{
+        if(next===pin1){onSave(pin1);}
+        else{setError("PINs don't match. Try again.");setPin1("");setPin2("");setStep(1);setTimeout(()=>setError(""),2000);}
+      }
+    }
+  };
+
+  const setupBiometric=async()=>{
+    try{
+      if(!window.PublicKeyCredential){setError("Biometrics not supported on this device.");return;}
+      const challenge=new Uint8Array(32);crypto.getRandomValues(challenge);
+      const userId=new TextEncoder().encode(user.id);
+      await navigator.credentials.create({publicKey:{challenge,rp:{name:"Hazel Inventory",id:window.location.hostname},user:{id:userId,name:user.username,displayName:user.name},pubKeyCredParams:[{type:"public-key",alg:-7}],authenticatorSelection:{userVerification:"required",authenticatorAttachment:"platform"},timeout:60000}});
+      localStorage.setItem("bio_"+user.id,"1");
+      setBioDone(true);
+    }catch(e){setError("Biometric setup failed: "+e.message);}
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000a",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <Card T={T} s={{padding:28,width:340,maxWidth:"100%"}}>
+        <div style={{textAlign:"center",marginBottom:20}}>
+          <div style={{fontSize:18,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:4}}>{step===1?"Set PIN":"Confirm PIN"}</div>
+          <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{step===1?"Enter a 4-digit PIN for quick unlock":"Enter the same PIN again"}</div>
+        </div>
+        <div style={{display:"flex",gap:14,justifyContent:"center",marginBottom:16}}>
+          {[0,1,2,3].map(i=>(<div key={i} style={{width:14,height:14,borderRadius:"50%",background:current.length>i?T.accent:T.border,transition:"background 0.15s"}}/>))}
+        </div>
+        {error&&<div style={{fontSize:12,color:T.low,fontFamily:MO,textAlign:"center",marginBottom:10}}>{error}</div>}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:16}}>
+          {["1","2","3","4","5","6","7","8","9","","0","del"].map((d,i)=>(
+            <button key={i} onClick={()=>d&&tap(d)} disabled={!d} style={{height:56,borderRadius:10,border:`1px solid ${T.border}`,background:d?T.card:"transparent",color:T.text,fontSize:d==="del"?16:20,fontWeight:600,cursor:d?"pointer":"default",fontFamily:MO,opacity:d?1:0}}
+              onMouseDown={e=>e.currentTarget.style.background=T.card2} onMouseUp={e=>e.currentTarget.style.background=T.card}>
+              {d==="del"?"⌫":d}
+            </button>
+          ))}
+        </div>
+        {window.PublicKeyCredential&&(
+          <button onClick={setupBiometric} style={{width:"100%",background:bioDone?T.okBg:T.accentDim,border:`1px solid ${bioDone?T.ok:T.accent}44`,borderRadius:8,padding:"10px",color:bioDone?T.ok:T.accent,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700,marginBottom:10}}>
+            {bioDone?"✓ Fingerprint/Face Registered":"🔬 Also set up Fingerprint / Face ID"}
+          </button>
+        )}
+        <Btn T={T} onClick={onClose} s={{width:"100%"}}>Cancel — skip for now</Btn>
+      </Card>
+    </div>
+  );
+}
+
 // ── LOGIN SCREEN (no default accounts shown) ──────────────────────────────────
 function LoginScreen({T,isDark,onToggle,users,setUsers,onLogin}){
   const [username,setUsername]=useState("");
@@ -160,17 +285,29 @@ function LoginScreen({T,isDark,onToggle,users,setUsers,onLogin}){
   const [error,setError]=useState("");
   const [showPass,setShowPass]=useState(false);
   const [shake,setShake]=useState(false);
-
   const [showRecovery,setShowRecovery]=useState(false);
   const [newPw,setNewPw]=useState("");
   const [confirmPw,setConfirmPw]=useState("");
   const [recoveryDone,setRecoveryDone]=useState(false);
+  const [showPinSetup,setShowPinSetup]=useState(null);
+  const [pendingUser,setPendingUser]=useState(null);
+
+  // Check if last user has PIN set — show PIN screen
+  const savedUserId=localStorage.getItem("lastUserId");
+  const savedUser=savedUserId?users.find(u=>u.id===savedUserId&&u.active):null;
+  const savedPin=savedUser?localStorage.getItem("pin_"+savedUser.id):null;
+  const [showPinUnlock,setShowPinUnlock]=useState(!!savedPin);
 
   const attempt=()=>{
-    // Secret admin recovery trigger
     if(username.trim()==="Hazel no salary"){setShowRecovery(true);setError("");return;}
     const u=users.find(u=>u.username===username.trim()&&u.password===password&&u.active);
-    if(u){setError("");onLogin(u);}
+    if(u){
+      setError("");
+      localStorage.setItem("lastUserId",u.id);
+      const hasPin=localStorage.getItem("pin_"+u.id);
+      if(!hasPin){setPendingUser(u);setShowPinSetup(u);}
+      else{onLogin(u);}
+    }
     else{setError("Invalid username or password");setShake(true);setTimeout(()=>setShake(false),500);}
   };
 
@@ -181,6 +318,10 @@ function LoginScreen({T,isDark,onToggle,users,setUsers,onLogin}){
     setRecoveryDone(true);setError("");
     setTimeout(()=>{setShowRecovery(false);setRecoveryDone(false);setNewPw("");setConfirmPw("");setUsername("");},2000);
   };
+
+  if(showPinUnlock&&savedUser){
+    return <PinUnlock T={T} storedUser={savedUser} onSuccess={u=>{setShowPinUnlock(false);onLogin(u);}} onUsePassword={()=>setShowPinUnlock(false)}/>;
+  }
 
   return(
     <div style={{minHeight:"100vh",background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:SE,padding:20,position:"relative",overflow:"hidden",transition:"background 0.25s"}}>
@@ -211,14 +352,8 @@ function LoginScreen({T,isDark,onToggle,users,setUsers,onLogin}){
             ):(
               <>
                 <div style={{display:"grid",gap:12,marginBottom:16}}>
-                  <div>
-                    <Label T={T}>New Password</Label>
-                    <Inp T={T} type="password" value={newPw} onChange={setNewPw} placeholder="At least 6 characters"/>
-                  </div>
-                  <div>
-                    <Label T={T}>Confirm Password</Label>
-                    <Inp T={T} type="password" value={confirmPw} onChange={setConfirmPw} placeholder="Repeat password" onKeyDown={e=>e.key==="Enter"&&doRecovery()}/>
-                  </div>
+                  <div><Label T={T}>New Password</Label><Inp T={T} type="password" value={newPw} onChange={setNewPw} placeholder="At least 6 characters"/></div>
+                  <div><Label T={T}>Confirm Password</Label><Inp T={T} type="password" value={confirmPw} onChange={setConfirmPw} placeholder="Repeat password" onKeyDown={e=>e.key==="Enter"&&doRecovery()}/></div>
                 </div>
                 {error&&<div style={{background:T.lowBg,border:`1px solid ${T.low}44`,borderRadius:8,padding:"10px 14px",fontSize:12,color:T.low,marginBottom:14,fontFamily:MO}}>⚠ {error}</div>}
                 <div style={{display:"flex",gap:10}}>
@@ -246,6 +381,7 @@ function LoginScreen({T,isDark,onToggle,users,setUsers,onLogin}){
           </Card>
         )}
       </div>
+      {showPinSetup&&<PinSetupModal T={T} user={showPinSetup} onClose={()=>{setShowPinSetup(null);onLogin(pendingUser);}} onSave={pin=>{localStorage.setItem("pin_"+showPinSetup.id,pin);setShowPinSetup(null);onLogin(pendingUser);}}/>}
     </div>
   );
 }
@@ -404,7 +540,7 @@ function ItemModal({T,item,onClose,onSave}){
           <div style={{gridColumn:"1/-1"}}><Label T={T}>Barcode</Label><Inp T={T} value={f.barcode||""} onChange={v=>set("barcode",v)} placeholder="Scan or type barcode number"/></div>
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-          <Btn T={T} v="danger" onClick={()=>onSave({...f,_delete:true})} s={{marginRight:"auto"}}>Delete</Btn>
+          <Btn T={T} v="danger" onClick={()=>{if(window.confirm("Delete "+f.name+"? This cannot be undone.")) onSave({...f,_delete:true});}} s={{marginRight:"auto"}}>Delete</Btn>
           <Btn T={T} onClick={onClose}>Cancel</Btn>
           <Btn T={T} v="primary" onClick={()=>onSave(f)} disabled={!f.name||!f.code}>Save Item</Btn>
         </div>
@@ -591,7 +727,24 @@ function HistoryTab({T,movements}){
 // ── USERS ─────────────────────────────────────────────────────────────────────
 function UserModal({T,user,onClose,onSave}){
   const [f,setF]=useState(user||{name:"",username:"",password:"",email:"",role:"staff",active:true});
+  const [newPw,setNewPw]=useState("");
+  const [showPwReset,setShowPwReset]=useState(false);
+  const [pwDone,setPwDone]=useState(false);
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
+
+  const resetPin=()=>{
+    localStorage.removeItem("pin_"+f.id);
+    localStorage.removeItem("bio_"+f.id);
+    setPwDone(true);setTimeout(()=>setPwDone(false),2000);
+  };
+
+  const doSave=()=>{
+    const out={...f};
+    if(user&&!newPw){delete out.password;}// keep existing if blank
+    else if(newPw) out.password=newPw;
+    onSave(out);
+  };
+
   return(
     <div style={{position:"fixed",inset:0,background:"#000a",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <Card T={T} s={{padding:28,width:480,maxWidth:"100%",maxHeight:"92vh",overflowY:"auto"}}>
@@ -600,10 +753,24 @@ function UserModal({T,user,onClose,onSave}){
           <div><Label T={T}>Full Name</Label><Inp T={T} value={f.name} onChange={v=>set("name",v)} placeholder="Full name"/></div>
           <div><Label T={T}>Username</Label><Inp T={T} value={f.username} onChange={v=>set("username",v)} placeholder="Login username"/></div>
           <div><Label T={T}>Email Address</Label><Inp T={T} type="email" value={f.email||""} onChange={v=>set("email",v)} placeholder="user@hazelcafe.lk"/></div>
-          <div><Label T={T}>Password</Label><Inp T={T} type="password" value={f.password} onChange={v=>set("password",v)} placeholder={user?"Leave blank to keep current":"Set password"}/></div>
           <div><Label T={T}>Role</Label><Sel T={T} value={f.role} onChange={v=>set("role",v)}>{Object.entries(ROLES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</Sel></div>
+          <div>
+            <Label T={T}>{user?"New Password (leave blank to keep current)":"Password"}</Label>
+            <Inp T={T} type="password" value={newPw} onChange={setNewPw} placeholder={user?"Enter new password to change…":"Set password"}/>
+          </div>
+          {user&&(
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <button onClick={resetPin} style={{flex:1,padding:"8px 12px",borderRadius:7,border:`1px solid ${T.warn}55`,background:T.warnBg,color:T.warn,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:MO}}>
+                🔑 Reset PIN &amp; Biometrics
+              </button>
+              {pwDone&&<span style={{fontSize:11,color:T.ok,fontFamily:MO,alignSelf:"center"}}>✓ PIN cleared!</span>}
+            </div>
+          )}
         </div>
-        <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}><Btn T={T} onClick={onClose}>Cancel</Btn><Btn T={T} v="primary" onClick={()=>onSave(f)} disabled={!f.name||!f.username||(!user&&!f.password)}>Save User</Btn></div>
+        <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+          <Btn T={T} onClick={onClose}>Cancel</Btn>
+          <Btn T={T} v="primary" onClick={doSave} disabled={!f.name||!f.username||(!user&&!newPw)}>Save User</Btn>
+        </div>
       </Card>
     </div>
   );
@@ -806,15 +973,15 @@ function ReportsTab({T,movements,countHistory}){
 
   const topItems=useMemo(()=>{
     const map={};
-    filtered.forEach(m=>{if(!map[m.code]) map[m.code]={code:m.code,name:m.itemName,dept:m.dept,out:0,in:0};if(m.type==="out") map[m.code].out++;else map[m.code].in++;});
-    return Object.values(map).sort((a,b)=>(b.out+b.in)-(a.out+a.in)).slice(0,15);
+    filtered.forEach(m=>{if(!map[m.code]) map[m.code]={code:m.code,name:m.itemName,dept:m.dept,out:0,in:0,outQty:0,inQty:0};if(m.type==="out"){map[m.code].out++;map[m.code].outQty+=Number(m.qty)||1;}else{map[m.code].in++;map[m.code].inQty+=Number(m.qty)||1;}});
+    return Object.values(map).map(i=>({...i,netQty:i.inQty-i.outQty})).sort((a,b)=>Math.abs(b.outQty+b.inQty)-Math.abs(a.outQty+a.inQty)).slice(0,15);
   },[filtered]);
   const maxItemVal=topItems.reduce((mx,i)=>Math.max(mx,i.out,i.in),0);
 
   const personStats=useMemo(()=>{
     const map={};
-    filtered.forEach(m=>{const k=m.personName||"Unknown";if(!map[k]) map[k]={name:k,role:m.userRole,ins:0,outs:0,total:0};if(m.type==="in") map[k].ins++;else map[k].outs++;map[k].total++;});
-    return Object.values(map).sort((a,b)=>b.total-a.total);
+    filtered.forEach(m=>{const k=m.personName||"Unknown";if(!map[k]) map[k]={name:k,role:m.userRole,ins:0,outs:0,total:0,inQty:0,outQty:0};if(m.type==="in"){map[k].ins++;map[k].inQty+=Number(m.qty)||1;}else{map[k].outs++;map[k].outQty+=Number(m.qty)||1;}map[k].total++;});
+    return Object.values(map).map(p=>({...p,netQty:p.inQty-p.outQty})).sort((a,b)=>b.total-a.total);
   },[filtered]);
 
   const deptStats=useMemo(()=>{
@@ -880,7 +1047,7 @@ function ReportsTab({T,movements,countHistory}){
                 <div style={{width:20,height:20,borderRadius:5,background:T.accentDim,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:T.accent,fontFamily:MO,flexShrink:0}}>{i+1}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</div>
-                  <div style={{display:"flex",gap:8,marginTop:2,fontSize:10,fontFamily:MO}}><span style={{color:T.low}}>↑{item.out}</span><span style={{color:T.ok}}>↓{item.in}</span><span style={{color:T.muted}}>{item.code}</span></div>
+                  <div style={{display:"flex",gap:8,marginTop:2,fontSize:10,fontFamily:MO}}><span style={{color:item.netQty>=0?T.ok:T.low,fontWeight:700}}>{item.netQty>=0?"+":""}{item.netQty}</span><span style={{color:T.muted}}>{item.code}</span></div>
                 </div>
               </div>
             ))}
@@ -895,8 +1062,8 @@ function ReportsTab({T,movements,countHistory}){
           <BarChart T={T} data={topItems.map(i=>({label:i.name,out:i.out,in:i.in}))} maxVal={maxItemVal}/>
           <div style={{overflow:"auto",marginTop:20}}>
             <table style={{width:"100%",borderCollapse:"collapse"}}>
-              <thead><tr style={{borderBottom:`1px solid ${T.border}`,background:T.card2}}>{["#","Code","Item","Dept","Outs","Ins","Total"].map(h=>(<th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:MO}}>{h}</th>))}</tr></thead>
-              <tbody>{topItems.map((item,idx)=>(<tr key={item.code} style={{borderBottom:idx<topItems.length-1?`1px solid ${T.border}`:"none"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><td style={{padding:"9px 12px",fontSize:11,color:T.muted,fontFamily:MO}}>{idx+1}</td><td style={{padding:"9px 12px",fontFamily:MO,fontSize:12,color:T.accent,fontWeight:700}}>{item.code}</td><td style={{padding:"9px 12px",fontSize:13,fontWeight:600,color:T.text,fontFamily:SE,minWidth:140}}>{item.name}</td><td style={{padding:"9px 12px"}}><DeptBadge T={T} dept={item.dept}/></td><td style={{padding:"9px 12px",fontWeight:700,color:T.low,fontFamily:MO}}>{item.out}</td><td style={{padding:"9px 12px",fontWeight:700,color:T.ok,fontFamily:MO}}>{item.in}</td><td style={{padding:"9px 12px",fontWeight:800,color:T.text,fontFamily:MO}}>{item.out+item.in}</td></tr>))}</tbody>
+              <thead><tr style={{borderBottom:`1px solid ${T.border}`,background:T.card2}}>{["#","Code","Item","Dept","Transactions","QTY"].map(h=>(<th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:MO}}>{h}</th>))}</tr></thead>
+              <tbody>{topItems.map((item,idx)=>(<tr key={item.code} style={{borderBottom:idx<topItems.length-1?`1px solid ${T.border}`:"none"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><td style={{padding:"9px 12px",fontSize:11,color:T.muted,fontFamily:MO}}>{idx+1}</td><td style={{padding:"9px 12px",fontFamily:MO,fontSize:12,color:T.accent,fontWeight:700}}>{item.code}</td><td style={{padding:"9px 12px",fontSize:13,fontWeight:600,color:T.text,fontFamily:SE,minWidth:140}}>{item.name}</td><td style={{padding:"9px 12px"}}><DeptBadge T={T} dept={item.dept}/></td><td style={{padding:"9px 12px",fontFamily:MO,fontSize:12,color:T.muted}}><span style={{color:T.low}}>↑{item.out}</span> <span style={{color:T.ok}}>↓{item.in}</span></td><td style={{padding:"9px 12px",fontWeight:800,fontSize:15,fontFamily:MO,color:item.netQty>=0?T.ok:T.low}}>{item.netQty>=0?"+":""}{item.netQty}</td></tr>))}</tbody>
             </table>
           </div>
         </Card>
@@ -907,8 +1074,8 @@ function ReportsTab({T,movements,countHistory}){
           <div style={{fontSize:17,fontWeight:600,fontFamily:SE,color:T.accent,marginBottom:12}}>Staff Activity</div>
           <div style={{overflow:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse"}}>
-              <thead><tr style={{borderBottom:`1px solid ${T.border}`,background:T.card2}}>{["Person","Role","Outs","Ins","Total","Share"].map(h=>(<th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:MO}}>{h}</th>))}</tr></thead>
-              <tbody>{personStats.map((p,idx)=>(<tr key={p.name} style={{borderBottom:idx<personStats.length-1?`1px solid ${T.border}`:"none"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><td style={{padding:"12px 14px",fontSize:15,fontWeight:600,color:T.text,fontFamily:SE}}>{p.name}</td><td style={{padding:"12px 14px"}}>{p.role&&<RoleBadge T={T} role={p.role}/>}</td><td style={{padding:"12px 14px",fontWeight:700,color:T.low,fontFamily:MO,fontSize:15}}>{p.outs}</td><td style={{padding:"12px 14px",fontWeight:700,color:T.ok,fontFamily:MO,fontSize:15}}>{p.ins}</td><td style={{padding:"12px 14px",fontWeight:800,color:T.text,fontFamily:MO,fontSize:16}}>{p.total}</td><td style={{padding:"12px 14px"}}><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:80,height:6,borderRadius:3,background:T.border,overflow:"hidden"}}><div style={{height:"100%",background:T.accent,width:`${filtered.length>0?(p.total/filtered.length)*100:0}%`}}/></div><span style={{fontSize:10,color:T.muted,fontFamily:MO}}>{filtered.length>0?Math.round((p.total/filtered.length)*100):0}%</span></div></td></tr>))}{!personStats.length&&<tr><td colSpan={6} style={{padding:30,textAlign:"center",color:T.muted,fontStyle:"italic",fontFamily:SE}}>No activity in this period</td></tr>}</tbody>
+              <thead><tr style={{borderBottom:`1px solid ${T.border}`,background:T.card2}}>{["Person","Role","Transactions","QTY","Share"].map(h=>(<th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:MO}}>{h}</th>))}</tr></thead>
+              <tbody>{personStats.map((p,idx)=>(<tr key={p.name} style={{borderBottom:idx<personStats.length-1?`1px solid ${T.border}`:"none"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><td style={{padding:"12px 14px",fontSize:15,fontWeight:600,color:T.text,fontFamily:SE}}>{p.name}</td><td style={{padding:"12px 14px"}}>{p.role&&<RoleBadge T={T} role={p.role}/>}</td><td style={{padding:"12px 14px",fontFamily:MO,fontSize:12,color:T.muted}}><span style={{color:T.low}}>↑{p.outs}</span> <span style={{color:T.ok}}>↓{p.ins}</span></td><td style={{padding:"12px 14px",fontWeight:800,fontSize:16,fontFamily:MO,color:p.netQty>=0?T.ok:T.low}}>{p.netQty>=0?"+":""}{p.netQty}</td><td style={{padding:"12px 14px"}}><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:80,height:6,borderRadius:3,background:T.border,overflow:"hidden"}}><div style={{height:"100%",background:T.accent,width:`${filtered.length>0?(p.total/filtered.length)*100:0}%`}}/></div><span style={{fontSize:10,color:T.muted,fontFamily:MO}}>{filtered.length>0?Math.round((p.total/filtered.length)*100):0}%</span></div></td></tr>))}{!personStats.length&&<tr><td colSpan={5} style={{padding:30,textAlign:"center",color:T.muted,fontStyle:"italic",fontFamily:SE}}>No activity in this period</td></tr>}</tbody>
             </table>
           </div>
         </Card>
@@ -1074,7 +1241,7 @@ function AICameraScanner({T,items,onSelect,onClose}){
     });
     const data=await resp.json();
     const code=data.result?.trim();
-    const matched=items.find(i=>i.code===code);
+    const matched=items.find(i=>i.code===code||i.barcode===code);
     setAiResult({code,matched});
   }catch(e){
     setCamError("AI error: "+e.message);
@@ -1493,7 +1660,11 @@ export default function App(){
               <span style={{width:6,height:6,borderRadius:"50%",background:syncDot?T.ok:T.border,transition:"background 0.3s",flexShrink:0}} title="Firebase sync"/>
               <button onClick={()=>setShowAlertSettings(true)} title="Alert settings" style={{position:"relative",background:alertBanner.length>0?T.warnBg:"transparent",border:`1px solid ${alertBanner.length>0?T.warn:T.border}`,borderRadius:7,padding:"4px 9px",cursor:"pointer",color:alertBanner.length>0?T.warn:T.muted,fontSize:14,lineHeight:1}}>🔔{alertBanner.length>0&&(<span style={{position:"absolute",top:-4,right:-4,minWidth:16,height:16,borderRadius:8,background:T.low,border:`2px solid ${T.navBg}`,fontSize:8,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:MO,padding:"0 3px"}}>{alertBanner.length}</span>)}</button>
               <ThemeToggle T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)}/>
-              <div style={{display:"flex",alignItems:"center",gap:7,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px"}}><RoleBadge T={T} role={currentUser.role}/><span style={{fontSize:12,color:T.text,fontWeight:600,fontFamily:SE}}>{currentUser.name}</span><button onClick={handleLogout} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:MO,padding:0,marginLeft:2,borderLeft:`1px solid ${T.border}`,paddingLeft:8}}>← Out</button></div>
+              {isMobile?(
+                <button onClick={handleLogout} style={{background:T.lowBg,border:`1px solid ${T.low}44`,borderRadius:8,padding:"6px 12px",cursor:"pointer",color:T.low,fontSize:12,fontWeight:700,fontFamily:MO}}>⏻ Out</button>
+              ):(
+                <div style={{display:"flex",alignItems:"center",gap:7,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px"}}><RoleBadge T={T} role={currentUser.role}/><span style={{fontSize:12,color:T.text,fontWeight:600,fontFamily:SE}}>{currentUser.name}</span><button onClick={handleLogout} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:MO,padding:0,marginLeft:2,borderLeft:`1px solid ${T.border}`,paddingLeft:8}}>← Out</button></div>
+              )}
             </div>
           </div>
           {!isMobile&&(<div style={{display:"flex",gap:0,overflowX:"auto",scrollbarWidth:"none"}}>{allowedTabs.map(t=>{const c=tabColor(t.key,T);const active=safeTab===t.key;return(<button key={t.key} onClick={()=>setTab(t.key)} style={{padding:"8px 13px",border:"none",borderBottom:active?`2px solid ${c}`:"2px solid transparent",background:active?c+"12":"transparent",color:active?c:T.muted,fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:MO,whiteSpace:"nowrap",transition:"all 0.15s",flexShrink:0}}>{t.icon} {t.label}</button>);})}</div>)}
