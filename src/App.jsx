@@ -1468,9 +1468,11 @@ function DeviceModal({T,device,onClose,onSave}){
   );
 }
 
-function DevicesTab({T,devices,setDevices}){
+function DevicesTab({T,devices,setDevices,loginHistory}){
   const [editDev,setEditDev]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
+  const [selectedDev,setSelectedDev]=useState(null);
+  const isMobile=useIsMobile();
 
   useEffect(()=>{
     const fp=getDeviceFingerprint();
@@ -1488,6 +1490,7 @@ function DevicesTab({T,devices,setDevices}){
   },[]);
 
   const thisFingerprint=getDeviceFingerprint();
+  const devHistory=selectedDev?loginHistory.filter(h=>h.deviceFingerprint===selectedDev.fingerprint):[];
 
   return(
     <div>
@@ -1495,32 +1498,36 @@ function DevicesTab({T,devices,setDevices}){
         <div style={{flex:1}}>
           <div style={{fontSize:22,fontWeight:600,fontFamily:SE,color:T.text}}>Device Management</div>
           <div style={{fontSize:12,color:T.muted,marginTop:2,fontFamily:MO}}>
-            {devices.filter(d=>d.active).length} active · devices appear here automatically when the app is opened on them
+            {devices.filter(d=>d.active).length} active · {loginHistory.length} total login events
           </div>
         </div>
         <Btn T={T} v="ghost" onClick={()=>setShowAdd(true)} s={{fontSize:12}}>+ Add Manually</Btn>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:14}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:14,marginBottom:20}}>
         {devices.map(d=>{
           const isThis=d.fingerprint===thisFingerprint;
+          const devLogs=loginHistory.filter(h=>h.deviceFingerprint===d.fingerprint);
+          const lastLogin=devLogs[0];
           return(
-            <Card T={T} key={d.id} s={{padding:20,border:`1px solid ${isThis?T.accent:d.pending?T.warn:T.border}`,position:"relative"}}>
+            <Card T={T} key={d.id} s={{padding:20,border:`1px solid ${isThis?T.accent:d.pending?T.warn:T.border}`,position:"relative",cursor:"pointer"}} onClick={()=>setSelectedDev(selectedDev?.id===d.id?null:d)}>
               {isThis&&(<div style={{position:"absolute",top:10,right:10,fontSize:9,fontWeight:700,color:T.accent,background:T.accentDim,padding:"2px 8px",borderRadius:4,fontFamily:MO,letterSpacing:"0.06em"}}>THIS DEVICE</div>)}
               {d.pending&&!isThis&&(<div style={{position:"absolute",top:10,right:10,fontSize:9,fontWeight:700,color:T.warn,background:T.warnBg,padding:"2px 8px",borderRadius:4,fontFamily:MO,letterSpacing:"0.06em"}}>NEEDS NAME</div>)}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
-                <div style={{fontSize:26}}>{d.location==="Kitchen"?"🍳":d.location==="Office"?"💻":"🖥"}</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                <div style={{fontSize:26}}>{d.location==="Kitchen"?"🍳":d.location==="Office"?"💻":"📱"}</div>
                 <span style={{fontSize:10,fontWeight:700,color:d.active?T.ok:T.muted,background:d.active?T.okBg:T.border+"55",padding:"2px 9px",borderRadius:4,fontFamily:MO}}>{d.active?"Active":"Offline"}</span>
               </div>
-              <div style={{fontWeight:600,fontSize:16,marginBottom:3,fontFamily:SE,color:d.pending?T.warn:T.text}}>{d.name}</div>
-              <div style={{fontSize:11,color:T.muted,marginBottom:14,fontFamily:MO}}>{d.location} · {d.registeredAt||"—"}</div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <div style={{fontWeight:600,fontSize:16,marginBottom:2,fontFamily:SE,color:d.pending?T.warn:T.text}}>{d.name}</div>
+              <div style={{fontSize:11,color:T.muted,marginBottom:6,fontFamily:MO}}>{d.location} · First seen: {d.registeredAt||"—"}</div>
+              {lastLogin&&<div style={{fontSize:10,color:T.muted,fontFamily:MO,marginBottom:10}}>Last login: <span style={{color:T.text,fontWeight:600}}>{lastLogin.userName}</span> · {lastLogin.loginTime}</div>}
+              <div style={{fontSize:10,color:T.accent,fontFamily:MO,marginBottom:10}}>{devLogs.length} login event{devLogs.length!==1?"s":""} · tap to view history</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}} onClick={e=>e.stopPropagation()}>
                 <Btn T={T} v={d.pending?"primary":"ghost"} onClick={()=>setEditDev(d)} s={{fontSize:11,padding:"5px 12px"}}>{d.pending?"Name this device":"Edit"}</Btn>
                 <button onClick={()=>setDevices(prev=>prev.map(p=>p.id===d.id?{...p,active:!p.active}:p))}
                   style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${d.active?T.low+"44":T.ok+"44"}`,background:"transparent",color:d.active?T.low:T.ok,cursor:"pointer",fontSize:11,fontFamily:MO,fontWeight:700}}>
                   {d.active?"Disable":"Enable"}
                 </button>
-                <button onClick={()=>setDevices(prev=>prev.filter(p=>p.id!==d.id))}
+                <button onClick={()=>{if(window.confirm("Remove "+d.name+"?")) setDevices(prev=>prev.filter(p=>p.id!==d.id));}}
                   style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:MO}}>
                   Remove
                 </button>
@@ -1530,12 +1537,66 @@ function DevicesTab({T,devices,setDevices}){
         })}
         {!devices.length&&(
           <div style={{color:T.muted,padding:40,gridColumn:"1/-1",textAlign:"center",fontFamily:SE}}>
-            <div style={{fontSize:32,marginBottom:10}}>🖥</div>
+            <div style={{fontSize:32,marginBottom:10}}>📱</div>
             <div style={{fontStyle:"italic",fontSize:15,marginBottom:6}}>No devices yet</div>
             <div style={{fontSize:12}}>Open the app on any device and it will appear here automatically.</div>
           </div>
         )}
       </div>
+
+      {selectedDev&&(
+        <Card T={T} s={{padding:20,marginBottom:20}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div>
+              <div style={{fontSize:16,fontWeight:600,fontFamily:SE,color:T.text}}>Login History — {selectedDev.name}</div>
+              <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginTop:2}}>{devHistory.length} events</div>
+            </div>
+            <button onClick={()=>setSelectedDev(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18}}>✕</button>
+          </div>
+          {devHistory.length===0?(
+            <div style={{color:T.muted,fontFamily:MO,fontSize:13,textAlign:"center",padding:20}}>No login history for this device yet.</div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:1}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,padding:"6px 10px",background:T.card2,borderRadius:6,marginBottom:4}}>
+                {["User","Role","Login Time","Logout Time"].map(h=>(
+                  <div key={h} style={{fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:MO}}>{h}</div>
+                ))}
+              </div>
+              {devHistory.map((h,i)=>(
+                <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,padding:"10px",background:i%2===0?T.card:T.card2,borderRadius:6,alignItems:"center"}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{h.userName}</div>
+                  <div><RoleBadge T={T} role={h.userRole}/></div>
+                  <div style={{fontSize:11,color:T.ok,fontFamily:MO,fontWeight:600}}>{h.loginTime}</div>
+                  <div style={{fontSize:11,color:h.logoutTime?T.low:T.muted,fontFamily:MO,fontWeight:h.logoutTime?600:400}}>{h.logoutTime||"Still active"}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
+      <Card T={T} s={{padding:20}}>
+        <div style={{fontSize:16,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:14}}>All Login Events</div>
+        {loginHistory.length===0?(
+          <div style={{color:T.muted,fontFamily:MO,fontSize:13,textAlign:"center",padding:20}}>No login history yet.</div>
+        ):(
+          <div style={{display:"flex",flexDirection:"column",gap:1}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,padding:"6px 10px",background:T.card2,borderRadius:6,marginBottom:4}}>
+              {["User","Device","Login","Logout"].map(h=>(
+                <div key={h} style={{fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:MO}}>{h}</div>
+              ))}
+            </div>
+            {loginHistory.slice(0,50).map((h,i)=>(
+              <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,padding:"10px",background:i%2===0?T.card:T.card2,borderRadius:6,alignItems:"center"}}>
+                <div style={{fontSize:12,fontWeight:600,color:T.text,fontFamily:SE}}>{h.userName}</div>
+                <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{h.deviceName||"Unknown"}</div>
+                <div style={{fontSize:11,color:T.ok,fontFamily:MO,fontWeight:600}}>{h.loginTime}</div>
+                <div style={{fontSize:11,color:h.logoutTime?T.low:T.muted,fontFamily:MO}}>{h.logoutTime||"Active"}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {editDev&&(
         <DeviceModal T={T} device={editDev} onClose={()=>setEditDev(null)}
@@ -1566,6 +1627,8 @@ export default function App(){
   const [countHistory,setCountHistory]=useState([]);
   const [users,setUsers]=useState(DEFAULT_USERS);
   const [devices,setDevices]=useState([]);
+  const [loginHistory,setLoginHistory]=useState([]);
+  const loginSessionRef=useRef(null);
   const [alertSettings,setAlertSettings]=useState({email1:"",email2:"",enabled:true,threshold:"atMin"});
   const [alertBanner,setAlertBanner]=useState([]);
   const [showAlertSettings,setShowAlertSettings]=useState(false);
@@ -1576,7 +1639,7 @@ export default function App(){
   // ── Boot: load from Firebase ──────────────────────────────────────────────
   useEffect(()=>{
     async function boot(){
-      const [si,sm,sc,su,sd,as,th]=await Promise.all([
+      const [si,sm,sc,su,sd,as,th,lh]=await Promise.all([
         fbLoad("items", DEFAULT_ITEMS),
         fbLoad("movements", []),
         fbLoad("counts", []),
@@ -1584,8 +1647,9 @@ export default function App(){
         fbLoad("devices", []),
         fbLoad("alertSettings", {email1:"",email2:"",enabled:true,threshold:"atMin"}),
         fbLoad("theme", false),
+        fbLoad("loginHistory", []),
       ]);
-      setItems(si); setMovements(sm); setCountHistory(sc); setUsers(su); setDevices(sd); setAlertSettings(as); setIsDark(th);
+      setItems(si); setMovements(sm); setCountHistory(sc); setUsers(su); setDevices(sd); setAlertSettings(as); setIsDark(th); setLoginHistory(lh); setIsDark(th);
       setReady(true);
     }
     boot();
@@ -1597,6 +1661,7 @@ export default function App(){
   useEffect(()=>{if(ready) fbSave("counts", countHistory);},[countHistory,ready]);
   useEffect(()=>{if(ready) fbSave("users", users);},[users,ready]);
   useEffect(()=>{if(ready) fbSave("devices", devices);},[devices,ready]);
+  useEffect(()=>{if(ready) fbSave("loginHistory", loginHistory);},[loginHistory,ready]);
   useEffect(()=>{if(ready) fbSave("alertSettings", alertSettings);},[alertSettings,ready]);
   useEffect(()=>{if(ready) fbSave("theme", isDark);},[isDark,ready]);
 
@@ -1613,6 +1678,7 @@ export default function App(){
           if(key==="counts") setCountHistory(p=>JSON.stringify(p)===JSON.stringify(val)?p:val);
           if(key==="users") setUsers(p=>JSON.stringify(p)===JSON.stringify(val)?p:val);
           if(key==="devices") setDevices(p=>JSON.stringify(p)===JSON.stringify(val)?p:val);
+          if(key==="loginHistory") setLoginHistory(p=>JSON.stringify(p)===JSON.stringify(val)?p:val);
           setSyncDot(true); setTimeout(()=>setSyncDot(false),600);
         }catch{}
       })
@@ -1635,8 +1701,23 @@ export default function App(){
     setAlertBanner(prev=>prev.filter(i=>{const cur=items.find(x=>x.id===i.id);return cur&&isLow(cur);}));
   },[items,ready,currentUser,alertSettings.threshold]);
 
-  const handleLogin=u=>{setCurrentUser(u);setTab(ROLES[u.role]?.tabs[0]||"out");};
-  const handleLogout=()=>{setCurrentUser(null);setTab("out");setAlertBanner([]);alertedRef.current.clear();};
+  const handleLogin=u=>{
+    setCurrentUser(u);
+    setTab(ROLES[u.role]?.tabs[0]||"out");
+    const fp=getDeviceFingerprint();
+    const devName=devices.find(d=>d.fingerprint===fp)?.name||"Unknown Device";
+    const sessionId=uid();
+    loginSessionRef.current=sessionId;
+    const entry={id:sessionId,userId:u.id,userName:u.name,userRole:u.role,deviceFingerprint:fp,deviceName:devName,loginTime:nowStr(),logoutTime:null};
+    setLoginHistory(prev=>[entry,...prev].slice(0,500));
+  };
+  const handleLogout=()=>{
+    if(loginSessionRef.current){
+      setLoginHistory(prev=>prev.map(h=>h.id===loginSessionRef.current?{...h,logoutTime:nowStr()}:h));
+      loginSessionRef.current=null;
+    }
+    setCurrentUser(null);setTab("out");setAlertBanner([]);alertedRef.current.clear();
+  };
 
   if(!ready) return(<div style={{minHeight:"100vh",background:LIGHT.bg,display:"flex",alignItems:"center",justifyContent:"center",color:LIGHT.muted,fontFamily:SE}}><div style={{textAlign:"center"}}><HazelLogo T={LIGHT} size={50}/><div style={{marginTop:12,fontSize:16,letterSpacing:"0.12em",color:LIGHT.muted}}>Loading…</div></div></div>);
   if(!currentUser) return(<><LoginScreen T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} users={users} setUsers={setUsers} onLogin={handleLogin}/><CreatorStamp T={T}/></>);
@@ -1681,7 +1762,7 @@ export default function App(){
         {safeTab==="hist" &&<HistoryTab T={T} movements={movements}/>}
         {safeTab==="reports"&&<ReportsTab T={T} movements={movements} countHistory={countHistory}/>}
         {safeTab==="users"&&<UsersTab T={T} users={users} setUsers={setUsers}/>}
-        {safeTab==="devices"&&<DevicesTab T={T} devices={devices} setDevices={setDevices}/>}
+        {safeTab==="devices"&&<DevicesTab T={T} devices={devices} setDevices={setDevices} loginHistory={loginHistory}/>}
       </div>
       {isMobile&&(<div style={{position:"fixed",bottom:0,left:0,right:0,background:T.navBg,borderTop:`1px solid ${T.navBorder}`,display:"flex",zIndex:100,overflowX:"auto"}}>{allowedTabs.map(t=>{const c=tabColor(t.key,T);return(<button key={t.key} onClick={()=>setTab(t.key)} style={{flex:1,minWidth:44,padding:"9px 2px 7px",border:"none",background:"transparent",color:safeTab===t.key?c:T.muted,cursor:"pointer",fontFamily:MO,display:"flex",flexDirection:"column",alignItems:"center",gap:2,borderTop:safeTab===t.key?`2px solid ${c}`:"2px solid transparent"}}><span style={{fontSize:15,lineHeight:1}}>{t.icon}</span><span style={{fontSize:7,fontWeight:700,whiteSpace:"nowrap"}}>{t.label}</span></button>);})}</div>)}
       {showAlertSettings&&<AlertSettingsModal T={T} settings={alertSettings} onClose={()=>setShowAlertSettings(false)} onSave={s=>{setAlertSettings(s);setShowAlertSettings(false);}}/> }
