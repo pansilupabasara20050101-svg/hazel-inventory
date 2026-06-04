@@ -1567,7 +1567,9 @@ function DevicesTab({T,devices,setDevices,loginHistory}){
                   <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{h.userName}</div>
                   <div><RoleBadge T={T} role={h.userRole}/></div>
                   <div style={{fontSize:11,color:T.ok,fontFamily:MO,fontWeight:600}}>{h.loginTime}</div>
-                  <div style={{fontSize:11,color:h.logoutTime?T.low:T.muted,fontFamily:MO,fontWeight:h.logoutTime?600:400}}>{h.logoutTime||"Still active"}</div>
+                  <div style={{fontSize:11,color:h.logoutTime?(h.logoutTime.startsWith("Timed")?T.warn:T.low):T.ok,fontFamily:MO,fontWeight:h.logoutTime?600:400}}>{h.logoutTime||(
+  <span style={{color:T.ok,fontWeight:700}}>● Active</span>
+)}</div>
                 </div>
               ))}
             </div>
@@ -1591,7 +1593,7 @@ function DevicesTab({T,devices,setDevices,loginHistory}){
                 <div style={{fontSize:12,fontWeight:600,color:T.text,fontFamily:SE}}>{h.userName}</div>
                 <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{h.deviceName||"Unknown"}</div>
                 <div style={{fontSize:11,color:T.ok,fontFamily:MO,fontWeight:600}}>{h.loginTime}</div>
-                <div style={{fontSize:11,color:h.logoutTime?T.low:T.muted,fontFamily:MO}}>{h.logoutTime||"Active"}</div>
+                <div style={{fontSize:11,color:h.logoutTime?(h.logoutTime.startsWith("Timed")?T.warn:T.low):T.ok,fontFamily:MO,fontWeight:600}}>{h.logoutTime||"● Active"}</div>
               </div>
             ))}
           </div>
@@ -1616,6 +1618,128 @@ function DevicesTab({T,devices,setDevices,loginHistory}){
 const ALL_TABS=[{key:"out",label:"Stock Out",icon:"↑"},{key:"in",label:"Stock In",icon:"↓"},{key:"inv",label:"Inventory",icon:"📦"},{key:"count",label:"Count",icon:"✏"},{key:"var",label:"Variance",icon:"≠"},{key:"po",label:"Order",icon:"🛒"},{key:"hist",label:"History",icon:"📋"},{key:"reports",label:"Reports",icon:"📈"},{key:"users",label:"Users",icon:"👥"},{key:"devices",label:"Devices",icon:"🖥"}];
 const tabColor=(k,T)=>({out:T.low,in:T.ok,inv:T.blue,count:T.warn,var:T.purple,po:T.accent,hist:T.muted,reports:T.blue,users:T.purple,devices:T.ok}[k]||T.muted);
 
+// ── USER MENU (avatar + dropdown) ────────────────────────────────────────────
+function UserMenu({T,user,onLogout,isMobile}){
+  const [open,setOpen]=useState(false);
+  const ref=useRef(null);
+  const initials=user.name.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+  const roleColor=ROLES[user.role]?.color||T.accent;
+
+  useEffect(()=>{
+    const handler=e=>{if(ref.current&&!ref.current.contains(e.target)) setOpen(false);};
+    document.addEventListener("mousedown",handler);
+    document.addEventListener("touchstart",handler);
+    return()=>{document.removeEventListener("mousedown",handler);document.removeEventListener("touchstart",handler);};
+  },[]);
+
+  return(
+    <div ref={ref} style={{position:"relative"}}>
+      <button onClick={()=>setOpen(p=>!p)} style={{display:"flex",alignItems:"center",gap:7,background:T.card,border:`1px solid ${open?T.accent:T.border}`,borderRadius:20,padding:"4px 10px 4px 4px",cursor:"pointer",transition:"all 0.15s"}}>
+        {/* Avatar circle */}
+        <div style={{width:28,height:28,borderRadius:"50%",background:roleColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff",fontFamily:MO,flexShrink:0}}>{initials}</div>
+        {/* Name — hidden on very small screens */}
+        <span style={{fontSize:12,color:T.text,fontWeight:600,fontFamily:SE,maxWidth:isMobile?70:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.name}</span>
+        <span style={{fontSize:9,color:T.muted,transform:open?"rotate(180deg)":"none",transition:"transform 0.2s"}}>▼</span>
+      </button>
+
+      {open&&(
+        <div style={{position:"absolute",top:"calc(100% + 8px)",right:0,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:`0 8px 24px ${T.border}88`,zIndex:999,minWidth:180,overflow:"hidden",animation:"fadeUp 0.15s ease"}}>
+          {/* User info */}
+          <div style={{padding:"14px 16px",borderBottom:`1px solid ${T.border}`,background:T.card2}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:36,height:36,borderRadius:"50%",background:roleColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:"#fff",fontFamily:MO}}>{initials}</div>
+              <div>
+                <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{user.name}</div>
+                <div style={{marginTop:2}}><RoleBadge T={T} role={user.role}/></div>
+              </div>
+            </div>
+          </div>
+          {/* Logout */}
+          <button onClick={()=>{setOpen(false);onLogout();}} style={{width:"100%",padding:"12px 16px",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:8,color:T.low,fontFamily:MO,fontSize:12,fontWeight:700,textAlign:"left"}}
+            onMouseEnter={e=>e.currentTarget.style.background=T.lowBg}
+            onMouseLeave={e=>e.currentTarget.style.background="none"}>
+            <span style={{fontSize:16}}>⏻</span> Sign Out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── MODULE SELECTOR ──────────────────────────────────────────────────────────
+function ModuleSelector({T,isDark,onToggle,currentUser,onSelect,onLogout}){
+  const isMobile=useIsMobile();
+  const modules=[
+    {id:"stores",icon:"🏪",title:"F&B Stores",desc:"Food & beverage inventory, stock in/out, orders and reports",color:"#5c3d2e",light:"#fdf6f0"},
+    {id:"glassware",icon:"🥤",title:"Glassware & Utensils",desc:"Track cups, plates, bowls, cutlery and breakage",color:"#1a5276",light:"#eaf4fb"},
+    {id:"wastage",icon:"🗑️",title:"Wastage",desc:"Record food wastage, expired and spoiled items",color:"#922b21",light:"#fdedec"},
+    {id:"grn",icon:"📋",title:"GRN Scanner",desc:"Scan supplier invoices to automatically receive stock",color:"#1e8449",light:"#eafaf1"},
+  ];
+  const [hovered,setHovered]=useState(null);
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,fontFamily:SE,transition:"background 0.25s"}}>
+      <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
+      <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.6}}`}</style>
+      <div style={{position:"absolute",inset:0,backgroundImage:`radial-gradient(${T.border} 1px,transparent 0)`,backgroundSize:"28px 28px",opacity:0.4,pointerEvents:"none"}}/>
+
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 24px",borderBottom:`1px solid ${T.border}`,background:T.navBg,position:"relative",zIndex:2}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <HazelLogo T={T} size={32}/>
+          <div>
+            <div style={{fontSize:16,fontWeight:600,color:T.accent,letterSpacing:"0.12em",textTransform:"uppercase",lineHeight:1}}>Hazel</div>
+            <div style={{fontSize:9,color:T.muted,letterSpacing:"0.2em",textTransform:"uppercase"}}>Cafe & Cakery</div>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <ThemeToggle T={T} isDark={isDark} onToggle={onToggle}/>
+          <div style={{display:"flex",alignItems:"center",gap:8,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px"}}>
+            <RoleBadge T={T} role={currentUser.role}/>
+            <span style={{fontSize:12,color:T.text,fontWeight:600,fontFamily:MO}}>{currentUser.name}</span>
+            <button onClick={onLogout} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:MO,padding:0,marginLeft:4,borderLeft:`1px solid ${T.border}`,paddingLeft:8}}>← Out</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={{maxWidth:900,margin:"0 auto",padding:isMobile?"24px 16px":"48px 24px",position:"relative",zIndex:1}}>
+        <div style={{textAlign:"center",marginBottom:40,animation:"fadeUp 0.4s ease"}}>
+          <div style={{fontSize:isMobile?24:32,fontWeight:600,color:T.text,marginBottom:8}}>What would you like to manage?</div>
+          <div style={{fontSize:14,color:T.muted,fontFamily:MO}}>Select a module to continue</div>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16}}>
+          {modules.map((m,i)=>(
+            <div key={m.id}
+              onClick={()=>onSelect(m.id)}
+              onMouseEnter={()=>setHovered(m.id)}
+              onMouseLeave={()=>setHovered(null)}
+              style={{
+                background:hovered===m.id?m.light:T.card,
+                border:`2px solid ${hovered===m.id?m.color:T.border}`,
+                borderRadius:16,
+                padding:"28px 24px",
+                cursor:"pointer",
+                transition:"all 0.2s ease",
+                animation:`fadeUp ${0.4+i*0.08}s ease`,
+                transform:hovered===m.id?"translateY(-3px)":"none",
+                boxShadow:hovered===m.id?`0 8px 24px ${m.color}22`:"none",
+              }}>
+              <div style={{fontSize:36,marginBottom:12}}>{m.icon}</div>
+              <div style={{fontSize:18,fontWeight:600,color:hovered===m.id?m.color:T.text,marginBottom:6,fontFamily:SE}}>{m.title}</div>
+              <div style={{fontSize:12,color:T.muted,fontFamily:MO,lineHeight:1.6}}>{m.desc}</div>
+              <div style={{marginTop:16,display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,color:hovered===m.id?m.color:T.muted,fontFamily:MO}}>
+                Open module <span style={{fontSize:14}}>→</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <CreatorStamp T={T}/>
+    </div>
+  );
+}
+
 export default function App(){
   const isMobile=useIsMobile();
   const [isDark,setIsDark]=useState(false);
@@ -1629,12 +1753,15 @@ export default function App(){
   const [devices,setDevices]=useState([]);
   const [loginHistory,setLoginHistory]=useState([]);
   const loginSessionRef=useRef(null);
+  const lastActivityRef=useRef(Date.now());
+  const SESSION_TIMEOUT_MS=2*60*60*1000;// 2 hours
   const [alertSettings,setAlertSettings]=useState({email1:"",email2:"",enabled:true,threshold:"atMin"});
   const [alertBanner,setAlertBanner]=useState([]);
   const [showAlertSettings,setShowAlertSettings]=useState(false);
   const alertedRef=useRef(new Set(JSON.parse(localStorage.getItem("alertedIds")||"[]")));
   const [ready,setReady]=useState(false);
   const [syncDot,setSyncDot]=useState(false);
+  const [activeModule,setActiveModule]=useState(null);
   const [sheetsSyncing,setSheetsSyncing]=useState(false);
   const [sheetsLastSync,setSheetsLastSync]=useState(null);
   const [sheetsError,setSheetsError]=useState(null);
@@ -1705,8 +1832,34 @@ export default function App(){
     setAlertBanner(prev=>prev.filter(i=>{const cur=items.find(x=>x.id===i.id);return cur&&isLow(cur);}));
   },[items,ready,currentUser,alertSettings.threshold]);
 
+  // Track last activity and auto-timeout after 2 hours
+  useEffect(()=>{
+    if(!currentUser) return;
+    const updateActivity=()=>{lastActivityRef.current=Date.now();};
+    window.addEventListener("click",updateActivity);
+    window.addEventListener("touchstart",updateActivity);
+    window.addEventListener("keydown",updateActivity);
+    const interval=setInterval(()=>{
+      if(Date.now()-lastActivityRef.current>SESSION_TIMEOUT_MS){
+        // Record timeout in login history
+        if(loginSessionRef.current){
+          setLoginHistory(prev=>prev.map(h=>h.id===loginSessionRef.current?{...h,logoutTime:"Timed out · "+nowStr()}:h));
+          loginSessionRef.current=null;
+        }
+        handleLogout();
+      }
+    },60000);// check every minute
+    return()=>{
+      window.removeEventListener("click",updateActivity);
+      window.removeEventListener("touchstart",updateActivity);
+      window.removeEventListener("keydown",updateActivity);
+      clearInterval(interval);
+    };
+  },[currentUser]);
+
   const handleLogin=u=>{
     setCurrentUser(u);
+    setActiveModule(null);
     setTab(ROLES[u.role]?.tabs[0]||"out");
     const fp=getDeviceFingerprint();
     const devName=devices.find(d=>d.fingerprint===fp)?.name||"Unknown Device";
@@ -1748,11 +1901,20 @@ export default function App(){
       setLoginHistory(prev=>prev.map(h=>h.id===loginSessionRef.current?{...h,logoutTime:nowStr()}:h));
       loginSessionRef.current=null;
     }
-    setCurrentUser(null);setTab("out");setAlertBanner([]);alertedRef.current.clear();
+    setCurrentUser(null);setTab("out");setAlertBanner([]);alertedRef.current.clear();setActiveModule(null);
   };
 
   if(!ready) return(<div style={{minHeight:"100vh",background:LIGHT.bg,display:"flex",alignItems:"center",justifyContent:"center",color:LIGHT.muted,fontFamily:SE}}><div style={{textAlign:"center"}}><HazelLogo T={LIGHT} size={50}/><div style={{marginTop:12,fontSize:16,letterSpacing:"0.12em",color:LIGHT.muted}}>Loading…</div></div></div>);
   if(!currentUser) return(<><LoginScreen T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} users={users} setUsers={setUsers} onLogin={handleLogin}/><CreatorStamp T={T}/></>);
+  if(!activeModule) return(<ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={setActiveModule} onLogout={handleLogout}/>);
+  if(activeModule==="glassware"||activeModule==="wastage"||activeModule==="grn") return(
+    <div style={{minHeight:"100vh",background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:SE,padding:24}}>
+      <div style={{fontSize:48,marginBottom:16}}>{activeModule==="glassware"?"🥤":activeModule==="wastage"?"🗑️":"📋"}</div>
+      <div style={{fontSize:24,fontWeight:600,color:T.text,marginBottom:8}}>{activeModule==="glassware"?"Glassware & Utensils":activeModule==="wastage"?"Wastage":"GRN Scanner"}</div>
+      <div style={{fontSize:13,color:T.muted,fontFamily:MO,marginBottom:24,textAlign:"center",maxWidth:340}}>This module is coming soon! We're building it next.</div>
+      <button onClick={()=>setActiveModule(null)} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"12px 28px",cursor:"pointer",fontSize:14,fontFamily:SE,fontWeight:600}}>← Back to Modules</button>
+    </div>
+  );
 
   const role=ROLES[currentUser.role];
   const allowedTabs=ALL_TABS.filter(t=>role.tabs.includes(t.key));
@@ -1766,7 +1928,10 @@ export default function App(){
       <div style={{background:T.navBg,borderBottom:`1px solid ${T.navBorder}`,position:"sticky",top:0,zIndex:90,boxShadow:T.shadow}}>
         <div style={{maxWidth:1440,margin:"0 auto",padding:"0 16px"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,height:50}}>
-            <div style={{display:"flex",alignItems:"center",gap:9,flexShrink:0}}><HazelLogo T={T} size={30}/><div><div style={{fontSize:14,fontWeight:600,color:T.accent,letterSpacing:"0.14em",textTransform:"uppercase",fontFamily:SE,lineHeight:1.1}}>Hazel</div><div style={{fontSize:8,color:T.muted,letterSpacing:"0.22em",textTransform:"uppercase",lineHeight:1,fontFamily:MO}}>Cafe &amp; Cakery</div></div></div>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+              <button onClick={()=>setActiveModule(null)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:7,padding:"4px 8px",cursor:"pointer",color:T.muted,fontSize:10,fontFamily:MO,fontWeight:700,flexShrink:0}}>⬡</button>
+              <HazelLogo T={T} size={30}/><div><div style={{fontSize:14,fontWeight:600,color:T.accent,letterSpacing:"0.14em",textTransform:"uppercase",fontFamily:SE,lineHeight:1.1}}>Hazel</div><div style={{fontSize:8,color:T.muted,letterSpacing:"0.22em",textTransform:"uppercase",lineHeight:1,fontFamily:MO}}>Cafe &amp; Cakery</div></div>
+            </div>
             <div style={{marginLeft:"auto",display:"flex",gap:7,alignItems:"center",flexShrink:0}}>
               {deficit>0&&<span style={{fontSize:10,fontWeight:700,color:T.low,background:T.lowBg,padding:"3px 7px",borderRadius:5,fontFamily:MO}}>{deficit} low</span>}
               {empty>0&&<span style={{fontSize:10,fontWeight:700,color:T.warn,background:T.warnBg,padding:"3px 7px",borderRadius:5,fontFamily:MO}}>{empty} empty</span>}
@@ -1776,14 +1941,10 @@ export default function App(){
               </button>
               <button onClick={()=>setShowAlertSettings(true)} title="Alert settings" style={{position:"relative",background:alertBanner.length>0?T.warnBg:"transparent",border:`1px solid ${alertBanner.length>0?T.warn:T.border}`,borderRadius:7,padding:"4px 9px",cursor:"pointer",color:alertBanner.length>0?T.warn:T.muted,fontSize:14,lineHeight:1}}>🔔{alertBanner.length>0&&(<span style={{position:"absolute",top:-4,right:-4,minWidth:16,height:16,borderRadius:8,background:T.low,border:`2px solid ${T.navBg}`,fontSize:8,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:MO,padding:"0 3px"}}>{alertBanner.length}</span>)}</button>
               <ThemeToggle T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)}/>
-              {isMobile?(
-                <button onClick={handleLogout} style={{background:T.lowBg,border:`1px solid ${T.low}44`,borderRadius:8,padding:"6px 12px",cursor:"pointer",color:T.low,fontSize:12,fontWeight:700,fontFamily:MO}}>⏻ Out</button>
-              ):(
-                <div style={{display:"flex",alignItems:"center",gap:7,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px"}}><RoleBadge T={T} role={currentUser.role}/><span style={{fontSize:12,color:T.text,fontWeight:600,fontFamily:SE}}>{currentUser.name}</span><button onClick={handleLogout} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:MO,padding:0,marginLeft:2,borderLeft:`1px solid ${T.border}`,paddingLeft:8}}>← Out</button></div>
-              )}
+              <UserMenu T={T} user={currentUser} onLogout={handleLogout} isMobile={isMobile}/>
             </div>
           </div>
-          {!isMobile&&(<div style={{display:"flex",gap:0,overflowX:"auto",scrollbarWidth:"none"}}>{allowedTabs.map(t=>{const c=tabColor(t.key,T);const active=safeTab===t.key;return(<button key={t.key} onClick={()=>setTab(t.key)} style={{padding:"8px 13px",border:"none",borderBottom:active?`2px solid ${c}`:"2px solid transparent",background:active?c+"12":"transparent",color:active?c:T.muted,fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:MO,whiteSpace:"nowrap",transition:"all 0.15s",flexShrink:0}}>{t.icon} {t.label}</button>);})}</div>)}
+          <div style={{display:"flex",gap:0,overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>{allowedTabs.map(t=>{const c=tabColor(t.key,T);const active=safeTab===t.key;return(<button key={t.key} onClick={()=>setTab(t.key)} style={{padding:"8px 13px",border:"none",borderBottom:active?`2px solid ${c}`:"2px solid transparent",background:active?c+"12":"transparent",color:active?c:T.muted,fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:MO,whiteSpace:"nowrap",transition:"all 0.15s",flexShrink:0}}>{t.icon} {t.label}</button>);})}</div>
         </div>
       </div>
       <div style={{maxWidth:1440,margin:"0 auto",padding:isMobile?"12px 10px 80px":"24px 16px 60px"}}>
@@ -1799,7 +1960,7 @@ export default function App(){
         {safeTab==="users"&&<UsersTab T={T} users={users} setUsers={setUsers}/>}
         {safeTab==="devices"&&<DevicesTab T={T} devices={devices} setDevices={setDevices} loginHistory={loginHistory}/>}
       </div>
-      {isMobile&&(<div style={{position:"fixed",bottom:0,left:0,right:0,background:T.navBg,borderTop:`1px solid ${T.navBorder}`,display:"flex",zIndex:100,overflowX:"auto"}}>{allowedTabs.map(t=>{const c=tabColor(t.key,T);return(<button key={t.key} onClick={()=>setTab(t.key)} style={{flex:1,minWidth:44,padding:"9px 2px 7px",border:"none",background:"transparent",color:safeTab===t.key?c:T.muted,cursor:"pointer",fontFamily:MO,display:"flex",flexDirection:"column",alignItems:"center",gap:2,borderTop:safeTab===t.key?`2px solid ${c}`:"2px solid transparent"}}><span style={{fontSize:15,lineHeight:1}}>{t.icon}</span><span style={{fontSize:7,fontWeight:700,whiteSpace:"nowrap"}}>{t.label}</span></button>);})}</div>)}
+      {isMobile&&(<div style={{position:"fixed",bottom:0,left:0,right:0,background:T.navBg,borderTop:`1px solid ${T.navBorder}`,display:"flex",zIndex:100,overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch",scrollSnapType:"x mandatory"}}><style>{`.mobile-tab-scroll::-webkit-scrollbar{display:none}`}</style>{allowedTabs.map(t=>{const c=tabColor(t.key,T);const active=safeTab===t.key;return(<button key={t.key} onClick={()=>setTab(t.key)} style={{flexShrink:0,minWidth:60,padding:"9px 6px 7px",border:"none",background:active?c+"15":"transparent",color:active?c:T.muted,cursor:"pointer",fontFamily:MO,display:"flex",flexDirection:"column",alignItems:"center",gap:2,borderTop:active?`2px solid ${c}`:`2px solid transparent`,scrollSnapAlign:"start",transition:"all 0.15s"}}><span style={{fontSize:16,lineHeight:1}}>{t.icon}</span><span style={{fontSize:8,fontWeight:700,whiteSpace:"nowrap"}}>{t.label}</span></button>);})}</div>)}
       {showAlertSettings&&<AlertSettingsModal T={T} settings={alertSettings} onClose={()=>setShowAlertSettings(false)} onSave={s=>{setAlertSettings(s);setShowAlertSettings(false);}}/> }
       <CreatorStamp T={T}/>
     </div>
