@@ -22,23 +22,6 @@ async function fbLoad(key, fallback) {
   } catch(e) { return fallback; }
 }
 
-// ── Google Sheets sync ───────────────────────────────────────────────────────
-const SHEETS_URL = "/api/sync-sheets";
-let sheetsSyncTimer = null;
-async function syncToSheets(payload) {
-  try {
-    await fetch(SHEETS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-  } catch (e) { console.warn("Sheets sync error", e); }
-}
-function debouncedSheetsSync(payload) {
-  if (sheetsSyncTimer) clearTimeout(sheetsSyncTimer);
-  sheetsSyncTimer = setTimeout(() => syncToSheets(payload), 4000);
-}
-
 // ── THEMES ─────────────────────────────────────────────────────────────────
 const DARK={
   mode:"dark",bg:"#0d0b09",card:"#17130f",card2:"#1e1812",border:"#2e2519",
@@ -1652,6 +1635,10 @@ export default function App(){
   const alertedRef=useRef(new Set(JSON.parse(localStorage.getItem("alertedIds")||"[]")));
   const [ready,setReady]=useState(false);
   const [syncDot,setSyncDot]=useState(false);
+  const [sheetsSyncing,setSheetsSyncing]=useState(false);
+  const [sheetsLastSync,setSheetsLastSync]=useState(null);
+  const [sheetsError,setSheetsError]=useState(null);
+  const syncTimeoutRef=useRef(null);
 
   // ── Boot: load from Firebase ──────────────────────────────────────────────
   useEffect(()=>{
@@ -1673,33 +1660,14 @@ export default function App(){
   },[]);
 
   // ── Save to Firebase on change ────────────────────────────────────────────
-  useEffect(()=>{if(ready) fbSave("items", items);},[items,ready]);
-  useEffect(()=>{if(ready) fbSave("movements", movements);},[movements,ready]);
-  useEffect(()=>{if(ready) fbSave("counts", countHistory);},[countHistory,ready]);
+  useEffect(()=>{if(ready){fbSave("items",items);triggerSheetsSync({items});}},[items,ready]);
+  useEffect(()=>{if(ready){fbSave("movements",movements);triggerSheetsSync({movements});}},[movements,ready]);
+  useEffect(()=>{if(ready){fbSave("counts",countHistory);triggerSheetsSync({countHistory});}},[countHistory,ready]);
   useEffect(()=>{if(ready) fbSave("users", users);},[users,ready]);
   useEffect(()=>{if(ready) fbSave("devices", devices);},[devices,ready]);
   useEffect(()=>{if(ready) fbSave("loginHistory", loginHistory);},[loginHistory,ready]);
   useEffect(()=>{if(ready) fbSave("alertSettings", alertSettings);},[alertSettings,ready]);
   useEffect(()=>{if(ready) fbSave("theme", isDark);},[isDark,ready]);
-
-  // ── Google Sheets auto-sync ───────────────────────────────────────────────
-  const [sheetsSyncStatus,setSheetsSyncStatus]=useState(null); // null | "syncing" | "ok" | "err"
-  useEffect(()=>{
-    if(!ready) return;
-    setSheetsSyncStatus("syncing");
-    const purchaseOrders=items.filter(i=>i.stock<i.minQty).map(i=>({
-      date:nowStr(),status:"Auto-generated",note:"Low stock",
-      items:[{code:i.code,name:i.name,qty:i.minQty-i.stock,supplier:i.supplier||""}]
-    }));
-    const payload={items,movements,countHistory,purchaseOrders};
-    if(sheetsSyncTimer) clearTimeout(sheetsSyncTimer);
-    sheetsSyncTimer=setTimeout(()=>{
-      syncToSheets(payload)
-        .then(()=>setSheetsSyncStatus("ok"))
-        .catch(()=>setSheetsSyncStatus("err"));
-      setTimeout(()=>setSheetsSyncStatus(null),4000);
-    },4000);
-  },[items,movements,countHistory,ready]);
 
   // ── Real-time sync via Firestore onSnapshot ───────────────────────────────
   useEffect(()=>{
@@ -1747,6 +1715,34 @@ export default function App(){
     const entry={id:sessionId,userId:u.id,userName:u.name,userRole:u.role,deviceFingerprint:fp,deviceName:devName,loginTime:nowStr(),logoutTime:null};
     setLoginHistory(prev=>[entry,...prev].slice(0,500));
   };
+  const syncToSheets=async(data)=>{
+    setSheetsSyncing(true);setSheetsError(null);
+    try{
+      const resp=await fetch("/api/sync-sheets",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(data)
+      });
+      const result=await resp.json();
+      if(result.success){setSheetsLastSync(nowStr());setSheetsError(null);}
+      else setSheetsError(result.error||"Sync failed");
+    }catch(e){setSheetsError(e.message);}
+    setSheetsSyncing(false);
+  };
+
+  const triggerSheetsSync=(overrides={})=>{
+    if(syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    syncTimeoutRef.current=setTimeout(()=>{
+      syncToSheets({
+        items:overrides.items||items,
+        movements:overrides.movements||movements,
+        countHistory:overrides.countHistory||countHistory,
+        purchaseOrders:overrides.purchaseOrders||[],
+        ...overrides
+      });
+    },3000);// debounce 3s
+  };
+
   const handleLogout=()=>{
     if(loginSessionRef.current){
       setLoginHistory(prev=>prev.map(h=>h.id===loginSessionRef.current?{...h,logoutTime:nowStr()}:h));
@@ -1775,7 +1771,9 @@ export default function App(){
               {deficit>0&&<span style={{fontSize:10,fontWeight:700,color:T.low,background:T.lowBg,padding:"3px 7px",borderRadius:5,fontFamily:MO}}>{deficit} low</span>}
               {empty>0&&<span style={{fontSize:10,fontWeight:700,color:T.warn,background:T.warnBg,padding:"3px 7px",borderRadius:5,fontFamily:MO}}>{empty} empty</span>}
               <span style={{width:6,height:6,borderRadius:"50%",background:syncDot?T.ok:T.border,transition:"background 0.3s",flexShrink:0}} title="Firebase sync"/>
-              <span style={{width:6,height:6,borderRadius:"50%",background:sheetsSyncStatus==="ok"?T.ok:sheetsSyncStatus==="syncing"?T.warn:sheetsSyncStatus==="err"?T.low:T.border,transition:"background 0.3s",flexShrink:0}} title={sheetsSyncStatus==="ok"?"Sheets synced":sheetsSyncStatus==="syncing"?"Syncing to Sheets…":sheetsSyncStatus==="err"?"Sheets sync failed":"Google Sheets"}/>
+              <button onClick={()=>syncToSheets({items,movements,countHistory})} title={sheetsLastSync?"Last synced: "+sheetsLastSync:"Sync to Google Sheets"} style={{background:sheetsError?T.lowBg:sheetsLastSync?T.okBg:T.card,border:`1px solid ${sheetsError?T.low:sheetsLastSync?T.ok:T.border}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:11,color:sheetsError?T.low:sheetsLastSync?T.ok:T.muted,fontFamily:MO,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
+                {sheetsSyncing?"⟳":"📊"}{!isMobile&&(sheetsSyncing?" Syncing…":sheetsError?" Error":sheetsLastSync?" Synced":"Sheets")}
+              </button>
               <button onClick={()=>setShowAlertSettings(true)} title="Alert settings" style={{position:"relative",background:alertBanner.length>0?T.warnBg:"transparent",border:`1px solid ${alertBanner.length>0?T.warn:T.border}`,borderRadius:7,padding:"4px 9px",cursor:"pointer",color:alertBanner.length>0?T.warn:T.muted,fontSize:14,lineHeight:1}}>🔔{alertBanner.length>0&&(<span style={{position:"absolute",top:-4,right:-4,minWidth:16,height:16,borderRadius:8,background:T.low,border:`2px solid ${T.navBg}`,fontSize:8,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:MO,padding:"0 3px"}}>{alertBanner.length}</span>)}</button>
               <ThemeToggle T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)}/>
               {isMobile?(
