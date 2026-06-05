@@ -1992,8 +1992,19 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
     }
     boot();
   },[]);
-  useEffect(()=>{if(ready) fbSave("glassItems",items);},[items,ready]);
-  useEffect(()=>{if(ready) fbSave("glassMov",movements);},[movements,ready]);
+  useEffect(()=>{
+    if(ready){
+      fbSave("glassItems",items);
+      // Sync to Google Sheets
+      fetch("/api/sync-glassware",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items,movements})}).catch(()=>{});
+    }
+  },[items,ready]);
+  useEffect(()=>{
+    if(ready){
+      fbSave("glassMov",movements);
+      fetch("/api/sync-glassware",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items,movements})}).catch(()=>{});
+    }
+  },[movements,ready]);
 
   const logMove=(type,item,qty,location,note)=>{
     setMovements(prev=>[{id:uid(),date:nowStr(),type,itemName:item.name,shortCode:item.shortCode,qty,location,personName:currentUser.name,userRole:currentUser.role,note:note||""},...prev].slice(0,500));
@@ -2360,7 +2371,12 @@ function WastageModule({T,isDark,onToggle,currentUser,onBack,fbItems,glassItems,
   useEffect(()=>{
     fbLoad("wastageLog",[]).then(w=>{setWastageLog(w);setReady(true);});
   },[]);
-  useEffect(()=>{if(ready) fbSave("wastageLog",wastageLog);},[wastageLog,ready]);
+  useEffect(()=>{
+    if(ready){
+      fbSave("wastageLog",wastageLog);
+      fetch("/api/sync-wastage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({wastageLog})}).catch(()=>{});
+    }
+  },[wastageLog,ready]);
 
   const TABS=[
     {key:"record",label:"Record",icon:"📝"},
