@@ -1618,6 +1618,594 @@ function DevicesTab({T,devices,setDevices,loginHistory}){
 const ALL_TABS=[{key:"out",label:"Stock Out",icon:"↑"},{key:"in",label:"Stock In",icon:"↓"},{key:"inv",label:"Inventory",icon:"📦"},{key:"count",label:"Count",icon:"✏"},{key:"var",label:"Variance",icon:"≠"},{key:"po",label:"Order",icon:"🛒"},{key:"hist",label:"History",icon:"📋"},{key:"reports",label:"Reports",icon:"📈"},{key:"users",label:"Users",icon:"👥"},{key:"devices",label:"Devices",icon:"🖥"}];
 const tabColor=(k,T)=>({out:T.low,in:T.ok,inv:T.blue,count:T.warn,var:T.purple,po:T.accent,hist:T.muted,reports:T.blue,users:T.purple,devices:T.ok}[k]||T.muted);
 
+// ── GLASSWARE & UTENSILS MODULE ──────────────────────────────────────────────
+
+const DEFAULT_GLASS_ITEMS = [];
+
+function GlassItemModal({T,item,onClose,onSave,canDelete,isMobile}){
+  const [f,setF]=useState(item||{shortCode:"",fullCode:"",name:"",dept:"FOH",category:"",usage:"",kitchenQty:0,frontQty:0,minQty:0,photoUrl:"",notes:""});
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  const total=(f.kitchenQty||0)+(f.frontQty||0);
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000a",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <Card T={T} s={{padding:24,width:500,maxWidth:"100%",maxHeight:"92vh",overflowY:"auto"}}>
+        <h2 style={{margin:"0 0 18px",fontSize:20,fontFamily:SE,fontWeight:600,color:T.text}}>{item?"Edit Item":"New Item"}</h2>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+          <div><Label T={T}>Short Code</Label><Inp T={T} value={f.shortCode} onChange={v=>set("shortCode",v)} placeholder="e.g. BOH12"/></div>
+          <div><Label T={T}>Department</Label><Sel T={T} value={f.dept} onChange={v=>set("dept",v)}><option value="FOH">FOH (Front)</option><option value="BOH">BOH (Kitchen)</option><option value="Both">Both</option></Sel></div>
+          <div style={{gridColumn:"1/-1"}}><Label T={T}>Full Code</Label><Inp T={T} value={f.fullCode} onChange={v=>set("fullCode",v)} placeholder="e.g. BOH/P/BW/GREEN/15/6/001"/></div>
+          <div style={{gridColumn:"1/-1"}}><Label T={T}>Item Name</Label><Inp T={T} value={f.name} onChange={v=>set("name",v)} placeholder="e.g. Arabiata Bowl"/></div>
+          <div><Label T={T}>Category</Label><Inp T={T} value={f.category} onChange={v=>set("category",v)} placeholder="e.g. Pasta, Add ons"/></div>
+          <div><Label T={T}>Primary Usage / Drink</Label><Inp T={T} value={f.usage} onChange={v=>set("usage",v)} placeholder="e.g. Arabiata, Latte"/></div>
+          <div><Label T={T}>Kitchen Qty</Label><Inp T={T} type="number" value={f.kitchenQty} onChange={v=>set("kitchenQty",Number(v))}/></div>
+          <div><Label T={T}>Front Qty</Label><Inp T={T} type="number" value={f.frontQty} onChange={v=>set("frontQty",Number(v))}/></div>
+          <div><Label T={T}>Min Qty (alert below)</Label><Inp T={T} type="number" value={f.minQty} onChange={v=>set("minQty",Number(v))}/></div>
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:total<f.minQty?T.lowBg:T.okBg,borderRadius:8,border:`1px solid ${total<f.minQty?T.low:T.ok}44`}}>
+            <div><div style={{fontSize:9,fontFamily:MO,fontWeight:700,color:T.muted,letterSpacing:"0.08em"}}>TOTAL STOCK</div><div style={{fontSize:22,fontWeight:800,color:total<f.minQty?T.low:T.ok,fontFamily:MO}}>{total}</div></div>
+          </div>
+          <div style={{gridColumn:"1/-1"}}><Label T={T}>Photo URL (Google Drive link)</Label><Inp T={T} value={f.photoUrl||""} onChange={v=>set("photoUrl",v)} placeholder="https://drive.google.com/..."/></div>
+          <div style={{gridColumn:"1/-1"}}><Label T={T}>Notes</Label><Inp T={T} value={f.notes||""} onChange={v=>set("notes",v)} placeholder="Optional notes"/></div>
+        </div>
+        {f.photoUrl&&<div style={{marginBottom:16,textAlign:"center"}}><img src={f.photoUrl.replace("open?id=","uc?id=").replace("/view","")} alt="Item" style={{maxWidth:"100%",maxHeight:160,borderRadius:8,objectFit:"cover",border:`1px solid ${T.border}`}} onError={e=>e.target.style.display="none"}/></div>}
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          {canDelete&&item&&<Btn T={T} v="danger" onClick={()=>{if(window.confirm("Delete "+f.name+"?")) onSave({...f,_delete:true});}} s={{marginRight:"auto"}}>Delete</Btn>}
+          <Btn T={T} onClick={onClose}>Cancel</Btn>
+          <Btn T={T} v="primary" onClick={()=>onSave(f)} disabled={!f.name||!f.shortCode}>Save Item</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function GlassBreakageModal({T,items,onClose,onSave,currentUser}){
+  const [search,setSearch]=useState("");
+  const [selected,setSelected]=useState(null);
+  const [qty,setQty]=useState(1);
+  const [location,setLocation]=useState("kitchen");
+  const [note,setNote]=useState("");
+  const filtered=useMemo(()=>{
+    if(!search) return [];
+    const q=search.toLowerCase();
+    return items.filter(i=>i.name.toLowerCase().includes(q)||i.shortCode.toLowerCase().includes(q)||(i.usage&&i.usage.toLowerCase().includes(q))||(i.category&&i.category.toLowerCase().includes(q))).slice(0,6);
+  },[items,search]);
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000a",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <Card T={T} s={{padding:24,width:460,maxWidth:"100%"}}>
+        <h2 style={{margin:"0 0 16px",fontSize:18,fontFamily:SE,fontWeight:600,color:T.low}}>🔴 Record Breakage</h2>
+        <div style={{marginBottom:12}}>
+          <Label T={T}>Search Item</Label>
+          <Inp T={T} value={search} onChange={v=>{setSearch(v);setSelected(null);}} placeholder="Name, short code, or drink…"/>
+          {filtered.length>0&&!selected&&(
+            <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,marginTop:4,overflow:"hidden"}}>
+              {filtered.map(i=>(
+                <div key={i.id} onClick={()=>{setSelected(i);setSearch(i.name);}} style={{padding:"10px 14px",cursor:"pointer",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}
+                  onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{i.name}</div>
+                    <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{i.shortCode} · {i.category}</div>
+                  </div>
+                  <div style={{textAlign:"right",fontSize:11,fontFamily:MO}}>
+                    <div style={{color:T.muted}}>K:{i.kitchenQty} F:{i.frontQty}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {selected&&(
+          <>
+            <div style={{display:"flex",gap:12,marginBottom:12}}>
+              <div style={{flex:1}}><Label T={T}>Location</Label>
+                <Sel T={T} value={location} onChange={setLocation}>
+                  <option value="kitchen">Kitchen (current: {selected.kitchenQty})</option>
+                  <option value="front">Front (current: {selected.frontQty})</option>
+                </Sel>
+              </div>
+              <div style={{flex:1}}><Label T={T}>Qty Broken</Label><Inp T={T} type="number" value={qty} onChange={v=>setQty(Math.max(1,Number(v)))}/></div>
+            </div>
+            <div style={{marginBottom:16}}><Label T={T}>Note (optional)</Label><Inp T={T} value={note} onChange={setNote} placeholder="e.g. Dropped during service"/></div>
+            <div style={{background:T.lowBg,border:`1px solid ${T.low}44`,borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,fontFamily:MO,color:T.low}}>
+              {selected.name} · {location==="kitchen"?"Kitchen":"Front"} {location==="kitchen"?selected.kitchenQty:selected.frontQty} → {Math.max(0,(location==="kitchen"?selected.kitchenQty:selected.frontQty)-qty)}
+            </div>
+          </>
+        )}
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <Btn T={T} onClick={onClose}>Cancel</Btn>
+          <Btn T={T} v="danger" onClick={()=>{if(selected) onSave(selected,qty,location,note);}} disabled={!selected||qty<1}>Record Breakage</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function GlassIssueModal({T,items,onClose,onSave}){
+  const [search,setSearch]=useState("");
+  const [selected,setSelected]=useState(null);
+  const [qty,setQty]=useState(1);
+  const [location,setLocation]=useState("kitchen");
+  const [note,setNote]=useState("");
+  const filtered=useMemo(()=>{
+    if(!search) return [];
+    const q=search.toLowerCase();
+    return items.filter(i=>i.name.toLowerCase().includes(q)||i.shortCode.toLowerCase().includes(q)||(i.usage&&i.usage.toLowerCase().includes(q))).slice(0,6);
+  },[items,search]);
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000a",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <Card T={T} s={{padding:24,width:460,maxWidth:"100%"}}>
+        <h2 style={{margin:"0 0 16px",fontSize:18,fontFamily:SE,fontWeight:600,color:T.ok}}>📥 Issue Items</h2>
+        <div style={{marginBottom:12}}>
+          <Label T={T}>Search Item</Label>
+          <Inp T={T} value={search} onChange={v=>{setSearch(v);setSelected(null);}} placeholder="Name, short code, or drink…"/>
+          {filtered.length>0&&!selected&&(
+            <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,marginTop:4,overflow:"hidden"}}>
+              {filtered.map(i=>(
+                <div key={i.id} onClick={()=>{setSelected(i);setSearch(i.name);}} style={{padding:"10px 14px",cursor:"pointer",borderBottom:`1px solid ${T.border}`}}
+                  onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{i.name}</div>
+                  <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{i.shortCode} · K:{i.kitchenQty} F:{i.frontQty}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {selected&&(
+          <>
+            <div style={{display:"flex",gap:12,marginBottom:12}}>
+              <div style={{flex:1}}><Label T={T}>Issue To</Label>
+                <Sel T={T} value={location} onChange={setLocation}>
+                  <option value="kitchen">Kitchen</option>
+                  <option value="front">Front</option>
+                </Sel>
+              </div>
+              <div style={{flex:1}}><Label T={T}>Qty Issued</Label><Inp T={T} type="number" value={qty} onChange={v=>setQty(Math.max(1,Number(v)))}/></div>
+            </div>
+            <div style={{marginBottom:16}}><Label T={T}>Note (optional)</Label><Inp T={T} value={note} onChange={setNote} placeholder="e.g. Replacement for breakage"/></div>
+            <div style={{background:T.okBg,border:`1px solid ${T.ok}44`,borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,fontFamily:MO,color:T.ok}}>
+              {selected.name} · {location==="kitchen"?"Kitchen":"Front"} {location==="kitchen"?selected.kitchenQty:selected.frontQty} → {(location==="kitchen"?selected.kitchenQty:selected.frontQty)+qty}
+            </div>
+          </>
+        )}
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <Btn T={T} onClick={onClose}>Cancel</Btn>
+          <Btn T={T} v="primary" onClick={()=>{if(selected) onSave(selected,qty,location,note);}} disabled={!selected||qty<1}>Confirm Issue</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function GlassTransferModal({T,items,onClose,onSave}){
+  const [search,setSearch]=useState("");
+  const [selected,setSelected]=useState(null);
+  const [qty,setQty]=useState(1);
+  const [direction,setDirection]=useState("ktof");
+  const [note,setNote]=useState("");
+  const filtered=useMemo(()=>{
+    if(!search) return [];
+    const q=search.toLowerCase();
+    return items.filter(i=>i.name.toLowerCase().includes(q)||i.shortCode.toLowerCase().includes(q)).slice(0,6);
+  },[items,search]);
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000a",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <Card T={T} s={{padding:24,width:460,maxWidth:"100%"}}>
+        <h2 style={{margin:"0 0 16px",fontSize:18,fontFamily:SE,fontWeight:600,color:T.accent}}>🔄 Transfer Items</h2>
+        <div style={{marginBottom:12}}>
+          <Label T={T}>Search Item</Label>
+          <Inp T={T} value={search} onChange={v=>{setSearch(v);setSelected(null);}} placeholder="Name or short code…"/>
+          {filtered.length>0&&!selected&&(
+            <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,marginTop:4,overflow:"hidden"}}>
+              {filtered.map(i=>(
+                <div key={i.id} onClick={()=>{setSelected(i);setSearch(i.name);}} style={{padding:"10px 14px",cursor:"pointer",borderBottom:`1px solid ${T.border}`}}
+                  onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{i.name}</div>
+                  <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{i.shortCode} · K:{i.kitchenQty} F:{i.frontQty}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {selected&&(
+          <>
+            <div style={{display:"flex",gap:12,marginBottom:12}}>
+              <div style={{flex:2}}><Label T={T}>Direction</Label>
+                <Sel T={T} value={direction} onChange={setDirection}>
+                  <option value="ktof">Kitchen → Front</option>
+                  <option value="ftok">Front → Kitchen</option>
+                </Sel>
+              </div>
+              <div style={{flex:1}}><Label T={T}>Qty</Label><Inp T={T} type="number" value={qty} onChange={v=>setQty(Math.max(1,Number(v)))}/></div>
+            </div>
+            <div style={{marginBottom:16}}><Label T={T}>Note (optional)</Label><Inp T={T} value={note} onChange={setNote} placeholder="Reason for transfer"/></div>
+            <div style={{background:T.accentDim,border:`1px solid ${T.accent}44`,borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,fontFamily:MO,color:T.accent}}>
+              {direction==="ktof"?`Kitchen ${selected.kitchenQty}→${selected.kitchenQty-qty} · Front ${selected.frontQty}→${selected.frontQty+qty}`:`Front ${selected.frontQty}→${selected.frontQty-qty} · Kitchen ${selected.kitchenQty}→${selected.kitchenQty+qty}`}
+            </div>
+          </>
+        )}
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <Btn T={T} onClick={onClose}>Cancel</Btn>
+          <Btn T={T} v="primary" onClick={()=>{if(selected) onSave(selected,qty,direction,note);}} disabled={!selected||qty<1}>Confirm Transfer</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
+  const isMobile=useIsMobile();
+  const [items,setItems]=useState([]);
+  const [movements,setMovements]=useState([]);
+  const [tab,setTab]=useState("inventory");
+  const [ready,setReady]=useState(false);
+  const [showAdd,setShowAdd]=useState(false);
+  const [editItem,setEditItem]=useState(null);
+  const [showBreakage,setShowBreakage]=useState(false);
+  const [showIssue,setShowIssue]=useState(false);
+  const [showTransfer,setShowTransfer]=useState(false);
+  const [search,setSearch]=useState("");
+  const [deptFilter,setDeptFilter]=useState("All");
+  const [catFilter,setCatFilter]=useState("All");
+
+  const canEdit=currentUser.role==="admin"||currentUser.role==="supervisor";
+  const canDelete=currentUser.role==="admin";
+
+  // Firebase keys separate from F&B
+  useEffect(()=>{
+    async function boot(){
+      const [gi,gm]=await Promise.all([fbLoad("glassItems",[]),fbLoad("glassMov",[])]);
+      setItems(gi);setMovements(gm);setReady(true);
+    }
+    boot();
+  },[]);
+  useEffect(()=>{if(ready) fbSave("glassItems",items);},[items,ready]);
+  useEffect(()=>{if(ready) fbSave("glassMov",movements);},[movements,ready]);
+
+  const logMove=(type,item,qty,location,note)=>{
+    setMovements(prev=>[{id:uid(),date:nowStr(),type,itemName:item.name,shortCode:item.shortCode,qty,location,personName:currentUser.name,userRole:currentUser.role,note:note||""},...prev].slice(0,500));
+  };
+
+  const handleBreakage=(item,qty,location,note)=>{
+    setItems(prev=>prev.map(i=>{
+      if(i.id!==item.id) return i;
+      return location==="kitchen"?{...i,kitchenQty:Math.max(0,i.kitchenQty-qty)}:{...i,frontQty:Math.max(0,i.frontQty-qty)};
+    }));
+    logMove("breakage",item,qty,location,note);
+    setShowBreakage(false);
+  };
+
+  const handleIssue=(item,qty,location,note)=>{
+    setItems(prev=>prev.map(i=>{
+      if(i.id!==item.id) return i;
+      return location==="kitchen"?{...i,kitchenQty:i.kitchenQty+qty}:{...i,frontQty:i.frontQty+qty};
+    }));
+    logMove("issue",item,qty,location,note);
+    setShowIssue(false);
+  };
+
+  const handleTransfer=(item,qty,direction,note)=>{
+    setItems(prev=>prev.map(i=>{
+      if(i.id!==item.id) return i;
+      if(direction==="ktof") return{...i,kitchenQty:Math.max(0,i.kitchenQty-qty),frontQty:i.frontQty+qty};
+      return{...i,frontQty:Math.max(0,i.frontQty-qty),kitchenQty:i.kitchenQty+qty};
+    }));
+    logMove("transfer",item,qty,direction,note);
+    setShowTransfer(false);
+  };
+
+  const filtered=useMemo(()=>{
+    let r=items;
+    if(deptFilter!=="All") r=r.filter(i=>i.dept===deptFilter||i.dept==="Both");
+    if(catFilter!=="All") r=r.filter(i=>i.category===catFilter);
+    if(search){const q=search.toLowerCase();r=r.filter(i=>i.name.toLowerCase().includes(q)||i.shortCode.toLowerCase().includes(q)||(i.usage&&i.usage.toLowerCase().includes(q))||(i.category&&i.category.toLowerCase().includes(q)));}
+    return r.sort((a,b)=>a.shortCode.localeCompare(b.shortCode));
+  },[items,search,deptFilter,catFilter]);
+
+  const categories=["All",...new Set(items.map(i=>i.category).filter(Boolean))];
+  const lowItems=items.filter(i=>(i.kitchenQty+i.frontQty)<i.minQty&&i.minQty>0);
+
+  const TABS=[
+    {key:"inventory",label:"Inventory",icon:"📋"},
+    {key:"breakage",label:"Breakage",icon:"🔴"},
+    {key:"issue",label:"Issue",icon:"📥"},
+    {key:"transfer",label:"Transfer",icon:"🔄"},
+    {key:"count",label:"Count",icon:"🔢"},
+    {key:"history",label:"History",icon:"📖"},
+    {key:"reports",label:"Reports",icon:"📊"},
+  ].filter(t=>{
+    if(currentUser.role==="staff") return ["breakage","issue"].includes(t.key);
+    if(currentUser.role==="counter") return ["breakage","issue","count","history"].includes(t.key);
+    if(currentUser.role==="supervisor") return ["inventory","breakage","issue","transfer","count","history","reports"].includes(t.key);
+    return true;// admin
+  });
+
+  if(!ready) return(<div style={{minHeight:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",color:T.muted,fontFamily:SE}}>Loading…</div>);
+
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,fontFamily:SE}}>
+      {/* Header */}
+      <div style={{background:T.navBg,borderBottom:`1px solid ${T.navBorder}`,position:"sticky",top:0,zIndex:100}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px"}}>
+          <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",color:T.muted,fontFamily:MO,fontSize:11,fontWeight:700,flexShrink:0}}
+            onMouseEnter={e=>{e.currentTarget.style.background=T.accentDim;e.currentTarget.style.color=T.accent;}}
+            onMouseLeave={e=>{e.currentTarget.style.background=T.card;e.currentTarget.style.color=T.muted;}}>
+            <span style={{fontSize:14,fontWeight:800}}>‹</span>{!isMobile&&" Modules"}
+          </button>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:700,color:T.accent,fontFamily:SE}}>🥤 Glassware & Utensils</div>
+            {lowItems.length>0&&<div style={{fontSize:10,color:T.low,fontFamily:MO,fontWeight:700}}>⚠ {lowItems.length} low stock</div>}
+          </div>
+          <ThemeToggle T={T} isDark={isDark} onToggle={onToggle}/>
+          <UserMenu T={T} user={currentUser} onLogout={onBack} isMobile={isMobile}/>
+        </div>
+        {/* Tabs */}
+        <div style={{display:"flex",overflowX:"auto",scrollbarWidth:"none",borderTop:`1px solid ${T.navBorder}`}}>
+          {TABS.map(t=>{
+            const active=tab===t.key;
+            return(<button key={t.key} onClick={()=>setTab(t.key)} style={{flexShrink:0,padding:"8px 14px",border:"none",borderBottom:active?`2px solid ${T.accent}`:"2px solid transparent",background:active?T.accentDim:"transparent",color:active?T.accent:T.muted,fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:MO,whiteSpace:"nowrap",transition:"all 0.15s"}}>{t.icon} {t.label}</button>);
+          })}
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={{padding:isMobile?"12px":"20px",maxWidth:1100,margin:"0 auto"}}>
+
+        {/* INVENTORY TAB */}
+        {tab==="inventory"&&(
+          <div>
+            <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+              <div style={{flex:1}}><div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text}}>Inventory</div><div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{items.length} items · {lowItems.length} low</div></div>
+              <Inp T={T} value={search} onChange={setSearch} placeholder="Search name, code, drink…" s={{width:isMobile?"100%":180}}/>
+              <Sel T={T} value={deptFilter} onChange={setDeptFilter} s={{minWidth:90}}><option>All</option><option value="FOH">FOH</option><option value="BOH">BOH</option></Sel>
+              <Sel T={T} value={catFilter} onChange={setCatFilter} s={{minWidth:100}}>{categories.map(c=><option key={c}>{c}</option>)}</Sel>
+              {canEdit&&<Btn T={T} v="primary" onClick={()=>setShowAdd(true)} s={{flexShrink:0}}>+ Add Item</Btn>}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+              {filtered.map(item=>{
+                const total=item.kitchenQty+item.frontQty;
+                const isLow=item.minQty>0&&total<item.minQty;
+                return(
+                  <Card T={T} key={item.id} s={{padding:0,overflow:"hidden",border:`1px solid ${isLow?T.low:T.border}`}}>
+                    {item.photoUrl&&<img src={item.photoUrl.replace("open?id=","uc?id=").replace("/view","")} alt={item.name} style={{width:"100%",height:120,objectFit:"cover"}} onError={e=>e.target.style.display="none"}/>}
+                    <div style={{padding:"12px 14px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                        <div>
+                          <div style={{fontSize:14,fontWeight:700,color:T.text,fontFamily:SE}}>{item.name}</div>
+                          <div style={{fontSize:10,color:T.accent,fontFamily:MO,fontWeight:700}}>{item.shortCode}</div>
+                        </div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{fontSize:22,fontWeight:800,color:isLow?T.low:T.ok,fontFamily:MO}}>{total}</div>
+                          <div style={{fontSize:9,color:T.muted,fontFamily:MO}}>TOTAL</div>
+                        </div>
+                      </div>
+                      {item.usage&&<div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:8}}>Used for: {item.usage}</div>}
+                      <div style={{display:"flex",gap:6,marginBottom:10}}>
+                        <div style={{flex:1,background:T.card2,borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
+                          <div style={{fontSize:9,color:T.muted,fontFamily:MO}}>KITCHEN</div>
+                          <div style={{fontSize:16,fontWeight:700,color:T.text,fontFamily:MO}}>{item.kitchenQty}</div>
+                        </div>
+                        <div style={{flex:1,background:T.card2,borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
+                          <div style={{fontSize:9,color:T.muted,fontFamily:MO}}>FRONT</div>
+                          <div style={{fontSize:16,fontWeight:700,color:T.text,fontFamily:MO}}>{item.frontQty}</div>
+                        </div>
+                        {item.minQty>0&&<div style={{flex:1,background:isLow?T.lowBg:T.card2,borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
+                          <div style={{fontSize:9,color:T.muted,fontFamily:MO}}>MIN</div>
+                          <div style={{fontSize:16,fontWeight:700,color:isLow?T.low:T.muted,fontFamily:MO}}>{item.minQty}</div>
+                        </div>}
+                      </div>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                        <Btn T={T} v="danger" onClick={()=>{setShowBreakage(item);}} s={{fontSize:11,padding:"5px 10px",flex:1}}>🔴 Breakage</Btn>
+                        <Btn T={T} v="primary" onClick={()=>{setShowIssue(item);}} s={{fontSize:11,padding:"5px 10px",flex:1}}>📥 Issue</Btn>
+                        {canEdit&&<Btn T={T} v="ghost" onClick={()=>setEditItem(item)} s={{fontSize:11,padding:"5px 10px"}}>Edit</Btn>}
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+              {!filtered.length&&<div style={{color:T.muted,padding:40,textAlign:"center",fontFamily:SE,gridColumn:"1/-1"}}><div style={{fontSize:32,marginBottom:8}}>🥤</div>No items found</div>}
+            </div>
+          </div>
+        )}
+
+        {/* BREAKAGE TAB */}
+        {tab==="breakage"&&(
+          <div>
+            <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center"}}>
+              <div style={{flex:1}}><div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text}}>Breakage</div><div style={{fontSize:11,color:T.muted,fontFamily:MO}}>Record broken or lost items</div></div>
+              <Btn T={T} v="danger" onClick={()=>setShowBreakage(true)}>+ Record Breakage</Btn>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {movements.filter(m=>m.type==="breakage").slice(0,30).map((m,i)=>(
+                <Card T={T} key={i} s={{padding:"12px 16px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div><div style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:SE}}>{m.itemName}</div><div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{m.personName} · {m.location} · {m.date}</div>{m.note&&<div style={{fontSize:11,color:T.muted,fontFamily:MO,marginTop:2}}>"{m.note}"</div>}</div>
+                    <div style={{fontSize:20,fontWeight:800,color:T.low,fontFamily:MO}}>-{m.qty}</div>
+                  </div>
+                </Card>
+              ))}
+              {!movements.filter(m=>m.type==="breakage").length&&<div style={{color:T.muted,padding:40,textAlign:"center",fontFamily:SE}}>No breakage recorded yet</div>}
+            </div>
+          </div>
+        )}
+
+        {/* ISSUE TAB */}
+        {tab==="issue"&&(
+          <div>
+            <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center"}}>
+              <div style={{flex:1}}><div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text}}>Issue</div><div style={{fontSize:11,color:T.muted,fontFamily:MO}}>Record newly issued items to Kitchen or Front</div></div>
+              <Btn T={T} v="primary" onClick={()=>setShowIssue(true)}>+ Issue Items</Btn>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {movements.filter(m=>m.type==="issue").slice(0,30).map((m,i)=>(
+                <Card T={T} key={i} s={{padding:"12px 16px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div><div style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:SE}}>{m.itemName}</div><div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{m.personName} · {m.location} · {m.date}</div>{m.note&&<div style={{fontSize:11,color:T.muted,fontFamily:MO,marginTop:2}}>"{m.note}"</div>}</div>
+                    <div style={{fontSize:20,fontWeight:800,color:T.ok,fontFamily:MO}}>+{m.qty}</div>
+                  </div>
+                </Card>
+              ))}
+              {!movements.filter(m=>m.type==="issue").length&&<div style={{color:T.muted,padding:40,textAlign:"center",fontFamily:SE}}>No issues recorded yet</div>}
+            </div>
+          </div>
+        )}
+
+        {/* TRANSFER TAB */}
+        {tab==="transfer"&&(
+          <div>
+            <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center"}}>
+              <div style={{flex:1}}><div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text}}>Transfer</div><div style={{fontSize:11,color:T.muted,fontFamily:MO}}>Move items between Kitchen and Front</div></div>
+              <Btn T={T} v="primary" onClick={()=>setShowTransfer(true)}>+ Transfer</Btn>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {movements.filter(m=>m.type==="transfer").slice(0,30).map((m,i)=>(
+                <Card T={T} key={i} s={{padding:"12px 16px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div><div style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:SE}}>{m.itemName}</div><div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{m.personName} · {m.location==="ktof"?"Kitchen → Front":"Front → Kitchen"} · {m.date}</div>{m.note&&<div style={{fontSize:11,color:T.muted,fontFamily:MO,marginTop:2}}>"{m.note}"</div>}</div>
+                    <div style={{fontSize:20,fontWeight:800,color:T.accent,fontFamily:MO}}>⇄{m.qty}</div>
+                  </div>
+                </Card>
+              ))}
+              {!movements.filter(m=>m.type==="transfer").length&&<div style={{color:T.muted,padding:40,textAlign:"center",fontFamily:SE}}>No transfers recorded yet</div>}
+            </div>
+          </div>
+        )}
+
+        {/* COUNT TAB */}
+        {tab==="count"&&(
+          <GlassCountTab T={T} items={items} setItems={setItems} currentUser={currentUser} isMobile={isMobile}/>
+        )}
+
+        {/* HISTORY TAB */}
+        {tab==="history"&&(
+          <div>
+            <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:14}}>History ({movements.length})</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {movements.slice(0,50).map((m,i)=>(
+                <Card T={T} key={i} s={{padding:"10px 14px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <span style={{fontSize:11,fontWeight:700,fontFamily:MO,color:m.type==="breakage"?T.low:m.type==="issue"?T.ok:T.accent,background:m.type==="breakage"?T.lowBg:m.type==="issue"?T.okBg:T.accentDim,padding:"2px 7px",borderRadius:4,marginRight:8}}>{m.type.toUpperCase()}</span>
+                      <span style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{m.itemName}</span>
+                      <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginTop:3}}>{m.personName} · {m.date}</div>
+                    </div>
+                    <div style={{fontSize:18,fontWeight:800,fontFamily:MO,color:m.type==="breakage"?T.low:m.type==="issue"?T.ok:T.accent}}>{m.type==="breakage"?"-":m.type==="issue"?"+":"⇄"}{m.qty}</div>
+                  </div>
+                </Card>
+              ))}
+              {!movements.length&&<div style={{color:T.muted,padding:40,textAlign:"center",fontFamily:SE}}>No history yet</div>}
+            </div>
+          </div>
+        )}
+
+        {/* REPORTS TAB */}
+        {tab==="reports"&&(
+          <GlassReportsTab T={T} items={items} movements={movements} isMobile={isMobile}/>
+        )}
+      </div>
+
+      {/* Modals */}
+      {showBreakage&&<GlassBreakageModal T={T} items={typeof showBreakage==="object"?[showBreakage,...items.filter(i=>i.id!==showBreakage.id)]:items} onClose={()=>setShowBreakage(false)} onSave={handleBreakage} currentUser={currentUser}/>}
+      {showIssue&&<GlassIssueModal T={T} items={typeof showIssue==="object"?[showIssue,...items.filter(i=>i.id!==showIssue.id)]:items} onClose={()=>setShowIssue(false)} onSave={handleIssue}/>}
+      {showTransfer&&<GlassTransferModal T={T} items={items} onClose={()=>setShowTransfer(false)} onSave={handleTransfer}/>}
+      {(showAdd||editItem)&&canEdit&&<GlassItemModal T={T} item={editItem} canDelete={canDelete} onClose={()=>{setShowAdd(false);setEditItem(null);}} onSave={form=>{if(form._delete){setItems(prev=>prev.filter(i=>i.id!==form.id));}else if(form.id){setItems(prev=>prev.map(i=>i.id===form.id?form:i));}else{setItems(prev=>[...prev,{...form,id:uid()}]);}setShowAdd(false);setEditItem(null);}}/>}
+    </div>
+  );
+}
+
+function GlassCountTab({T,items,setItems,currentUser,isMobile}){
+  const [counts,setCounts]=useState({kitchen:{},front:{}});
+  const [submitted,setSubmitted]=useState(false);
+  const [search,setSearch]=useState("");
+  const filtered=useMemo(()=>{
+    if(!search) return items;
+    const q=search.toLowerCase();
+    return items.filter(i=>i.name.toLowerCase().includes(q)||i.shortCode.toLowerCase().includes(q));
+  },[items,search]);
+  const totalCounted=Object.keys(counts.kitchen).filter(k=>counts.kitchen[k]!=="").length+Object.keys(counts.front).filter(k=>counts.front[k]!=="").length;
+  const submit=()=>{
+    setItems(prev=>prev.map(i=>{
+      const k=counts.kitchen[i.id];const f=counts.front[i.id];
+      return{...i,kitchenQty:k!=null&&k!==""?Number(k):i.kitchenQty,frontQty:f!=null&&f!==""?Number(f):i.frontQty};
+    }));
+    setCounts({kitchen:{},front:{}});setSubmitted(true);setTimeout(()=>setSubmitted(false),3000);
+  };
+  return(
+    <div>
+      <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+        <div style={{flex:1}}><div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text}}>Count</div><div style={{fontSize:11,color:T.muted,fontFamily:MO}}>as {currentUser.name} · {totalCounted} entered</div></div>
+        <Inp T={T} value={search} onChange={setSearch} placeholder="Search…" s={{width:160}}/>
+      </div>
+      {submitted&&<div style={{background:T.okBg,border:`1px solid ${T.ok}44`,borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.ok,fontFamily:MO}}>✓ Count submitted</div>}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {filtered.map(item=>(
+          <Card T={T} key={item.id} s={{padding:"12px 14px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div><div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:SE}}>{item.name}</div><div style={{fontSize:10,color:T.accent,fontFamily:MO}}>{item.shortCode}</div></div>
+              <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>Total: <strong>{item.kitchenQty+item.frontQty}</strong></div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <div>
+                <div style={{fontSize:9,color:T.muted,fontFamily:MO,marginBottom:4}}>KITCHEN (was {item.kitchenQty})</div>
+                <input type="number" value={counts.kitchen[item.id]||""} onChange={e=>setCounts(p=>({...p,kitchen:{...p.kitchen,[item.id]:e.target.value}}))} placeholder="Enter count" style={{background:T.bg,border:`1px solid ${counts.kitchen[item.id]!=null&&counts.kitchen[item.id]!==""?T.accent:T.border}`,borderRadius:8,color:T.text,fontSize:16,padding:"8px 12px",width:"100%",outline:"none",fontFamily:MO,fontWeight:700,boxSizing:"border-box"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:9,color:T.muted,fontFamily:MO,marginBottom:4}}>FRONT (was {item.frontQty})</div>
+                <input type="number" value={counts.front[item.id]||""} onChange={e=>setCounts(p=>({...p,front:{...p.front,[item.id]:e.target.value}}))} placeholder="Enter count" style={{background:T.bg,border:`1px solid ${counts.front[item.id]!=null&&counts.front[item.id]!==""?T.accent:T.border}`,borderRadius:8,color:T.text,fontSize:16,padding:"8px 12px",width:"100%",outline:"none",fontFamily:MO,fontWeight:700,boxSizing:"border-box"}}/>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+      <Btn T={T} v="primary" onClick={submit} disabled={totalCounted===0} s={{width:"100%",padding:"14px",fontSize:15,marginTop:12}}>✓ Submit Count ({totalCounted} entries)</Btn>
+    </div>
+  );
+}
+
+function GlassReportsTab({T,items,movements,isMobile}){
+  const totalItems=items.length;
+  const lowItems=items.filter(i=>i.minQty>0&&(i.kitchenQty+i.frontQty)<i.minQty).length;
+  const totalBreakage=movements.filter(m=>m.type==="breakage").reduce((s,m)=>s+(m.qty||0),0);
+  const totalIssued=movements.filter(m=>m.type==="issue").reduce((s,m)=>s+(m.qty||0),0);
+  const breakageByItem={};
+  movements.filter(m=>m.type==="breakage").forEach(m=>{breakageByItem[m.itemName]=(breakageByItem[m.itemName]||0)+m.qty;});
+  const topBreakage=Object.entries(breakageByItem).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  return(
+    <div>
+      <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:14}}>Reports</div>
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:12,marginBottom:16}}>
+        {[["Total Items",totalItems,T.accent],["Low Stock",lowItems,T.low],["Total Broken",totalBreakage,T.warn],["Total Issued",totalIssued,T.ok]].map(([label,val,color])=>(
+          <Card T={T} key={label} s={{padding:"16px",textAlign:"center"}}>
+            <div style={{fontSize:26,fontWeight:800,color,fontFamily:MO}}>{val}</div>
+            <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginTop:4,textTransform:"uppercase",letterSpacing:"0.08em"}}>{label}</div>
+          </Card>
+        ))}
+      </div>
+      {topBreakage.length>0&&(
+        <Card T={T} s={{padding:16,marginBottom:12}}>
+          <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Top Breakage Items</div>
+          {topBreakage.map(([name,qty],i)=>(
+            <div key={name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<topBreakage.length-1?`1px solid ${T.border}`:"none"}}>
+              <div style={{fontSize:13,color:T.text,fontFamily:SE}}>{name}</div>
+              <div style={{fontSize:15,fontWeight:800,color:T.low,fontFamily:MO}}>{qty} broken</div>
+            </div>
+          ))}
+        </Card>
+      )}
+      <Card T={T} s={{padding:16}}>
+        <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Stock Levels</div>
+        {items.sort((a,b)=>(a.kitchenQty+a.frontQty)-(b.kitchenQty+b.frontQty)).slice(0,10).map((item,i)=>{
+          const total=item.kitchenQty+item.frontQty;
+          const isLow=item.minQty>0&&total<item.minQty;
+          return(
+            <div key={item.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<9?`1px solid ${T.border}`:"none"}}>
+              <div><div style={{fontSize:13,color:T.text,fontFamily:SE}}>{item.name}</div><div style={{fontSize:10,color:T.muted,fontFamily:MO}}>K:{item.kitchenQty} F:{item.frontQty}</div></div>
+              <div style={{fontSize:16,fontWeight:800,color:isLow?T.low:T.ok,fontFamily:MO}}>{total}</div>
+            </div>
+          );
+        })}
+      </Card>
+    </div>
+  );
+}
+
 // ── USER MENU (avatar + dropdown) ────────────────────────────────────────────
 function UserMenu({T,user,onLogout,isMobile}){
   const [open,setOpen]=useState(false);
@@ -1923,11 +2511,12 @@ export default function App(){
   if(!ready) return(<div style={{minHeight:"100vh",background:LIGHT.bg,display:"flex",alignItems:"center",justifyContent:"center",color:LIGHT.muted,fontFamily:SE}}><div style={{textAlign:"center"}}><HazelLogo T={LIGHT} size={50}/><div style={{marginTop:12,fontSize:16,letterSpacing:"0.12em",color:LIGHT.muted}}>Loading…</div></div></div>);
   if(!currentUser) return(<><LoginScreen T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} users={users} setUsers={setUsers} onLogin={handleLogin}/><CreatorStamp T={T}/></>);
   if(!activeModule) return(<ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m)=>{window.history.pushState({module:m},"");setActiveModule(m);}} onLogout={handleLogout}/>);
-  if(activeModule==="glassware"||activeModule==="wastage"||activeModule==="grn") return(
+  if(activeModule==="glassware") return(<GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}}/>);
+  if(activeModule==="wastage"||activeModule==="grn") return(
     <div style={{minHeight:"100vh",background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:SE,padding:24}}>
-      <div style={{fontSize:48,marginBottom:16}}>{activeModule==="glassware"?"🥤":activeModule==="wastage"?"🗑️":"📋"}</div>
-      <div style={{fontSize:24,fontWeight:600,color:T.text,marginBottom:8}}>{activeModule==="glassware"?"Glassware & Utensils":activeModule==="wastage"?"Wastage":"GRN Scanner"}</div>
-      <div style={{fontSize:13,color:T.muted,fontFamily:MO,marginBottom:24,textAlign:"center",maxWidth:340}}>This module is coming soon! We're building it next.</div>
+      <div style={{fontSize:48,marginBottom:16}}>{activeModule==="wastage"?"🗑️":"📋"}</div>
+      <div style={{fontSize:24,fontWeight:600,color:T.text,marginBottom:8}}>{activeModule==="wastage"?"Wastage":"GRN Scanner"}</div>
+      <div style={{fontSize:13,color:T.muted,fontFamily:MO,marginBottom:24,textAlign:"center",maxWidth:340}}>This module is coming soon!</div>
       <button onClick={()=>setActiveModule(null)} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"12px 28px",cursor:"pointer",fontSize:14,fontFamily:SE,fontWeight:600}}>← Back to Modules</button>
     </div>
   );
