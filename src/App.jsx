@@ -826,7 +826,7 @@ function PurchaseOrderTab({T,items,alertSettings}){
       const res=await fetch("/api/send-alert",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({to1:alertSettings.email1,to2:alertSettings.email2,count:deficitItems.length,lines,timestamp:nowStr()}),
+        body:JSON.stringify({to1:alertSettings.email1,to2:alertSettings.email2,count:deficitItems.length,lines,timestamp:nowStr(),items:deficitItems.map(i=>({name:i.name,code:i.code,unit:i.unit,qtySize:i.qtySize||'',stock:i.stock,minQty:i.minQty,supplier:i.supplier||''}))}),
       });
       if(!res.ok) throw new Error("Server error "+res.status);
       setEmailSent(true);setTimeout(()=>setEmailSent(false),3000);
@@ -1762,6 +1762,16 @@ export default function App(){
   const [ready,setReady]=useState(false);
   const [syncDot,setSyncDot]=useState(false);
   const [activeModule,setActiveModule]=useState(null);
+
+  // Browser back button support
+  useEffect(()=>{
+    const handlePopState=(e)=>{
+      if(activeModule){setActiveModule(null);}
+      else if(currentUser){setCurrentUser(null);setTab("out");setAlertBanner([]);alertedRef.current.clear();}
+    };
+    window.addEventListener("popstate",handlePopState);
+    return()=>window.removeEventListener("popstate",handlePopState);
+  },[activeModule,currentUser]);
   const [sheetsSyncing,setSheetsSyncing]=useState(false);
   const [sheetsLastSync,setSheetsLastSync]=useState(null);
   const [sheetsError,setSheetsError]=useState(null);
@@ -1835,20 +1845,26 @@ export default function App(){
   // Track last activity and auto-timeout after 2 hours
   useEffect(()=>{
     if(!currentUser) return;
+    lastActivityRef.current=Date.now();
     const updateActivity=()=>{lastActivityRef.current=Date.now();};
     window.addEventListener("click",updateActivity);
     window.addEventListener("touchstart",updateActivity);
     window.addEventListener("keydown",updateActivity);
     const interval=setInterval(()=>{
-      if(Date.now()-lastActivityRef.current>SESSION_TIMEOUT_MS){
-        // Record timeout in login history
+      const elapsed=Date.now()-lastActivityRef.current;
+      if(elapsed>SESSION_TIMEOUT_MS){
         if(loginSessionRef.current){
-          setLoginHistory(prev=>prev.map(h=>h.id===loginSessionRef.current?{...h,logoutTime:"Timed out · "+nowStr()}:h));
+          const timeoutTime=nowStr();
+          setLoginHistory(prev=>prev.map(h=>h.id===loginSessionRef.current?{...h,logoutTime:"Timed out · "+timeoutTime}:h));
           loginSessionRef.current=null;
         }
-        handleLogout();
+        setCurrentUser(null);
+        setTab("out");
+        setAlertBanner([]);
+        alertedRef.current.clear();
+        setActiveModule(null);
       }
-    },60000);// check every minute
+    },30000);// check every 30 seconds
     return()=>{
       window.removeEventListener("click",updateActivity);
       window.removeEventListener("touchstart",updateActivity);
@@ -1906,7 +1922,7 @@ export default function App(){
 
   if(!ready) return(<div style={{minHeight:"100vh",background:LIGHT.bg,display:"flex",alignItems:"center",justifyContent:"center",color:LIGHT.muted,fontFamily:SE}}><div style={{textAlign:"center"}}><HazelLogo T={LIGHT} size={50}/><div style={{marginTop:12,fontSize:16,letterSpacing:"0.12em",color:LIGHT.muted}}>Loading…</div></div></div>);
   if(!currentUser) return(<><LoginScreen T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} users={users} setUsers={setUsers} onLogin={handleLogin}/><CreatorStamp T={T}/></>);
-  if(!activeModule) return(<ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={setActiveModule} onLogout={handleLogout}/>);
+  if(!activeModule) return(<ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m)=>{window.history.pushState({module:m},"");setActiveModule(m);}} onLogout={handleLogout}/>);
   if(activeModule==="glassware"||activeModule==="wastage"||activeModule==="grn") return(
     <div style={{minHeight:"100vh",background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:SE,padding:24}}>
       <div style={{fontSize:48,marginBottom:16}}>{activeModule==="glassware"?"🥤":activeModule==="wastage"?"🗑️":"📋"}</div>
@@ -1929,7 +1945,12 @@ export default function App(){
         <div style={{maxWidth:1440,margin:"0 auto",padding:"0 16px"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,height:50}}>
             <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-              <button onClick={()=>setActiveModule(null)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:7,padding:"4px 8px",cursor:"pointer",color:T.muted,fontSize:10,fontFamily:MO,fontWeight:700,flexShrink:0}}>⬡</button>
+              <button onClick={()=>{window.history.back();}} style={{display:"flex",alignItems:"center",gap:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",color:T.muted,fontFamily:MO,fontSize:11,fontWeight:700,flexShrink:0,transition:"all 0.15s"}}
+                onMouseEnter={e=>{e.currentTarget.style.background=T.accentDim;e.currentTarget.style.color=T.accent;e.currentTarget.style.borderColor=T.accent;}}
+                onMouseLeave={e=>{e.currentTarget.style.background=T.card;e.currentTarget.style.color=T.muted;e.currentTarget.style.borderColor=T.border;}}>
+                <span style={{fontSize:14,fontWeight:800}}>‹</span>
+                {!isMobile&&<span>Modules</span>}
+              </button>
               <HazelLogo T={T} size={30}/><div><div style={{fontSize:14,fontWeight:600,color:T.accent,letterSpacing:"0.14em",textTransform:"uppercase",fontFamily:SE,lineHeight:1.1}}>Hazel</div><div style={{fontSize:8,color:T.muted,letterSpacing:"0.22em",textTransform:"uppercase",lineHeight:1,fontFamily:MO}}>Cafe &amp; Cakery</div></div>
             </div>
             <div style={{marginLeft:"auto",display:"flex",gap:7,alignItems:"center",flexShrink:0}}>
