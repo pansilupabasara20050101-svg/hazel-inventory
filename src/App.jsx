@@ -1618,6 +1618,140 @@ function DevicesTab({T,devices,setDevices,loginHistory}){
 const ALL_TABS=[{key:"out",label:"Stock Out",icon:"↑"},{key:"in",label:"Stock In",icon:"↓"},{key:"inv",label:"Inventory",icon:"📦"},{key:"count",label:"Count",icon:"✏"},{key:"var",label:"Variance",icon:"≠"},{key:"po",label:"Order",icon:"🛒"},{key:"hist",label:"History",icon:"📋"},{key:"reports",label:"Reports",icon:"📈"},{key:"users",label:"Users",icon:"👥"},{key:"devices",label:"Devices",icon:"🖥"}];
 const tabColor=(k,T)=>({out:T.low,in:T.ok,inv:T.blue,count:T.warn,var:T.purple,po:T.accent,hist:T.muted,reports:T.blue,users:T.purple,devices:T.ok}[k]||T.muted);
 
+// ── QR CODE COMPONENTS ───────────────────────────────────────────────────────
+function useQRCode(text, size=120){
+  const [dataUrl,setDataUrl]=useState(null);
+  useEffect(()=>{
+    if(!text) return;
+    const script=document.createElement("script");
+    script.src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+    script.onload=()=>{
+      try{
+        const div=document.createElement("div");
+        new window.QRCode(div,{text,width:size,height:size,colorDark:"#3d2b1f",colorLight:"#ffffff"});
+        setTimeout(()=>{
+          const img=div.querySelector("img")||div.querySelector("canvas");
+          if(img) setDataUrl(img.src||img.toDataURL());
+        },100);
+      }catch(e){}
+    };
+    if(!window.QRCode) document.head.appendChild(script);
+    else{
+      try{
+        const div=document.createElement("div");
+        new window.QRCode(div,{text,width:size,height:size,colorDark:"#3d2b1f",colorLight:"#ffffff"});
+        setTimeout(()=>{
+          const img=div.querySelector("img")||div.querySelector("canvas");
+          if(img) setDataUrl(img.src||img.toDataURL());
+        },100);
+      }catch(e){}
+    }
+  },[text,size]);
+  return dataUrl;
+}
+
+function QRLabel({T,item,onClose}){
+  const qr=useQRCode(item.shortCode,160);
+  const print=()=>{
+    const w=window.open("","_blank");
+    w.document.write(`<html><head><title>QR Label - ${item.shortCode}</title><style>
+      body{font-family:Georgia,serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#fff;}
+      .label{border:2px solid #5c3d2e;border-radius:12px;padding:16px 20px;text-align:center;width:200px;}
+      .code{font-size:11px;font-family:monospace;color:#8c6e5a;letter-spacing:0.1em;margin-bottom:4px;}
+      .name{font-size:14px;font-weight:600;color:#3d2b1f;margin-bottom:8px;}
+      .short{font-size:20px;font-weight:800;color:#5c3d2e;font-family:monospace;margin-top:8px;}
+      .dept{font-size:10px;background:#fdf6f0;border:1px solid #e8ddd5;border-radius:4px;padding:2px 8px;color:#8c6e5a;margin-top:4px;display:inline-block;}
+      @media print{body{-webkit-print-color-adjust:exact;}}
+    </style></head><body>
+      <div class="label">
+        <div class="code">${item.fullCode||item.shortCode}</div>
+        <div class="name">${item.name}</div>
+        ${qr?`<img src="${qr}" width="160" height="160"/>`:""}
+        <div class="short">${item.shortCode}</div>
+        ${item.dept?`<div class="dept">${item.dept}</div>`:""}
+        ${item.usage?`<div class="code" style="margin-top:4px;">For: ${item.usage}</div>`:""}
+      </div>
+      <script>window.onload=()=>window.print();<\/script>
+    </body></html>`);
+    w.document.close();
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000a",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <Card T={T} s={{padding:28,width:320,maxWidth:"100%",textAlign:"center"}}>
+        <div style={{fontSize:16,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:4}}>QR Label</div>
+        <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:20}}>{item.name}</div>
+        <div style={{border:`2px solid ${T.accent}`,borderRadius:12,padding:16,display:"inline-block",marginBottom:16,background:"#fff"}}>
+          {qr?<img src={qr} width={160} height={160} alt="QR Code"/>:<div style={{width:160,height:160,display:"flex",alignItems:"center",justifyContent:"center",color:T.muted,fontFamily:MO,fontSize:11}}>Generating…</div>}
+          <div style={{fontSize:18,fontWeight:800,color:"#5c3d2e",fontFamily:"monospace",marginTop:8}}>{item.shortCode}</div>
+          <div style={{fontSize:12,color:"#8c6e5a",fontFamily:"Georgia,serif",marginTop:2}}>{item.name}</div>
+          {item.dept&&<div style={{fontSize:10,color:"#8c6e5a",fontFamily:"monospace",marginTop:4}}>{item.dept}</div>}
+        </div>
+        <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginBottom:16}}>Scan to quickly record breakage or issue</div>
+        <div style={{display:"flex",gap:8}}>
+          <Btn T={T} onClick={onClose} s={{flex:1}}>Close</Btn>
+          <Btn T={T} v="primary" onClick={print} s={{flex:2}}>🖨 Print Label</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function QRScanner({T,items,onFound,onClose}){
+  const videoRef=useRef(null);
+  const [error,setError]=useState("");
+  const [scanning,setScanning]=useState(true);
+
+  useEffect(()=>{
+    let stream=null;
+    let interval=null;
+    async function start(){
+      try{
+        stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+        if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play();}
+        // Use BarcodeDetector if available
+        if(window.BarcodeDetector){
+          const detector=new window.BarcodeDetector({formats:["qr_code"]});
+          interval=setInterval(async()=>{
+            if(!videoRef.current||!scanning) return;
+            try{
+              const barcodes=await detector.detect(videoRef.current);
+              if(barcodes.length>0){
+                const code=barcodes[0].rawValue;
+                const item=items.find(i=>i.shortCode===code||i.fullCode===code);
+                clearInterval(interval);
+                stream.getTracks().forEach(t=>t.stop());
+                onFound(item,code);
+              }
+            }catch(e){}
+          },500);
+        }else{
+          setError("QR scanning not supported on this browser. Try Chrome on Android.");
+        }
+      }catch(e){setError("Camera access denied.");}
+    }
+    start();
+    return()=>{if(stream) stream.getTracks().forEach(t=>t.stop());if(interval) clearInterval(interval);};
+  },[]);
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000",zIndex:400,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+      <div style={{position:"absolute",top:16,right:16,zIndex:10}}>
+        <button onClick={onClose} style={{background:"#fff2",border:"none",borderRadius:8,padding:"8px 14px",color:"#fff",cursor:"pointer",fontSize:14,fontFamily:"monospace"}}>✕ Close</button>
+      </div>
+      <div style={{fontSize:13,color:"#fff",fontFamily:"monospace",marginBottom:16,letterSpacing:"0.1em"}}>SCAN QR LABEL</div>
+      {error?<div style={{color:"#ff6b6b",fontFamily:"monospace",fontSize:12,padding:20,textAlign:"center"}}>{error}</div>:(
+        <div style={{position:"relative",width:280,height:280,borderRadius:12,overflow:"hidden",border:"3px solid #fff4"}}>
+          <video ref={videoRef} style={{width:"100%",height:"100%",objectFit:"cover"}} muted playsInline/>
+          <div style={{position:"absolute",inset:0,border:"3px solid #d4a97a",borderRadius:10,pointerEvents:"none"}}/>
+          <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:140,height:140,border:"2px solid #d4a97a",borderRadius:4,pointerEvents:"none"}}/>
+        </div>
+      )}
+      <div style={{fontSize:11,color:"#ffffff88",fontFamily:"monospace",marginTop:16}}>Point at a Hazel inventory QR label</div>
+    </div>
+  );
+}
+
 // ── GLASSWARE & UTENSILS MODULE ──────────────────────────────────────────────
 
 const DEFAULT_GLASS_ITEMS = [];
@@ -1841,6 +1975,8 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
   const [showBreakage,setShowBreakage]=useState(false);
   const [showIssue,setShowIssue]=useState(false);
   const [showTransfer,setShowTransfer]=useState(false);
+  const [showQR,setShowQR]=useState(null);
+  const [showQRScanner,setShowQRScanner]=useState(false);
   const [search,setSearch]=useState("");
   const [deptFilter,setDeptFilter]=useState("All");
   const [catFilter,setCatFilter]=useState("All");
@@ -1933,6 +2069,7 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
             <div style={{fontSize:14,fontWeight:700,color:T.accent,fontFamily:SE}}>🥤 Glassware & Utensils</div>
             {lowItems.length>0&&<div style={{fontSize:10,color:T.low,fontFamily:MO,fontWeight:700}}>⚠ {lowItems.length} low stock</div>}
           </div>
+          <button onClick={()=>setShowQRScanner(true)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 10px",cursor:"pointer",color:T.muted,fontSize:12,fontFamily:MO,fontWeight:700}}>📷 Scan</button>
           <ThemeToggle T={T} isDark={isDark} onToggle={onToggle}/>
           <UserMenu T={T} user={currentUser} onLogout={onBack} isMobile={isMobile}/>
         </div>
@@ -1995,6 +2132,7 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
                         <Btn T={T} v="danger" onClick={()=>{setShowBreakage(item);}} s={{fontSize:11,padding:"5px 10px",flex:1}}>🔴 Breakage</Btn>
                         <Btn T={T} v="primary" onClick={()=>{setShowIssue(item);}} s={{fontSize:11,padding:"5px 10px",flex:1}}>📥 Issue</Btn>
                         {canEdit&&<Btn T={T} v="ghost" onClick={()=>setEditItem(item)} s={{fontSize:11,padding:"5px 10px"}}>Edit</Btn>}
+                        <Btn T={T} v="ghost" onClick={()=>setShowQR(item)} s={{fontSize:11,padding:"5px 10px"}}>QR</Btn>
                       </div>
                     </div>
                   </Card>
@@ -2105,7 +2243,9 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
       {showBreakage&&<GlassBreakageModal T={T} items={typeof showBreakage==="object"?[showBreakage,...items.filter(i=>i.id!==showBreakage.id)]:items} onClose={()=>setShowBreakage(false)} onSave={handleBreakage} currentUser={currentUser}/>}
       {showIssue&&<GlassIssueModal T={T} items={typeof showIssue==="object"?[showIssue,...items.filter(i=>i.id!==showIssue.id)]:items} onClose={()=>setShowIssue(false)} onSave={handleIssue}/>}
       {showTransfer&&<GlassTransferModal T={T} items={items} onClose={()=>setShowTransfer(false)} onSave={handleTransfer}/>}
-      {(showAdd||editItem)&&canEdit&&<GlassItemModal T={T} item={editItem} canDelete={canDelete} onClose={()=>{setShowAdd(false);setEditItem(null);}} onSave={form=>{if(form._delete){setItems(prev=>prev.filter(i=>i.id!==form.id));}else if(form.id){setItems(prev=>prev.map(i=>i.id===form.id?form:i));}else{setItems(prev=>[...prev,{...form,id:uid()}]);}setShowAdd(false);setEditItem(null);}}/>}
+      {(showAdd||editItem)&&canEdit&&<GlassItemModal T={T} item={editItem} canDelete={canDelete} onClose={()=>{setShowAdd(false);setEditItem(null);}} onSave={form=>{if(form._delete){setItems(prev=>prev.filter(i=>i.id!==form.id));}else if(form.id){setItems(prev=>prev.map(i=>i.id===form.id?form:i));}else{setItems(prev=>[...prev,{...form,id:uid()}]);}setShowAdd(false);setEditItem(null);}}/> }
+      {showQR&&<QRLabel T={T} item={showQR} onClose={()=>setShowQR(null)}/>}
+      {showQRScanner&&<QRScanner T={T} items={items} onClose={()=>setShowQRScanner(false)} onFound={(item,code)=>{setShowQRScanner(false);if(item){setShowBreakage(item);} else alert("Item not found for code: "+code);}}/>}
     </div>
   );
 }
@@ -2201,6 +2341,447 @@ function GlassReportsTab({T,items,movements,isMobile}){
             </div>
           );
         })}
+      </Card>
+    </div>
+  );
+}
+
+// ── WASTAGE MODULE ───────────────────────────────────────────────────────────
+function WastageModule({T,isDark,onToggle,currentUser,onBack,fbItems,glassItems,setFbItems,setGlassItems}){
+  const isMobile=useIsMobile();
+  const [wastageLog,setWastageLog]=useState([]);
+  const [ready,setReady]=useState(false);
+  const [tab,setTab]=useState("record");
+  const [showForm,setShowForm]=useState(false);
+
+  const canViewHistory=["admin","supervisor","counter"].includes(currentUser.role);
+  const canViewReports=["admin","supervisor"].includes(currentUser.role);
+
+  useEffect(()=>{
+    fbLoad("wastageLog",[]).then(w=>{setWastageLog(w);setReady(true);});
+  },[]);
+  useEffect(()=>{if(ready) fbSave("wastageLog",wastageLog);},[wastageLog,ready]);
+
+  const TABS=[
+    {key:"record",label:"Record",icon:"📝"},
+    ...(canViewHistory?[{key:"history",label:"History",icon:"📖"}]:[]),
+    ...(canViewReports?[{key:"reports",label:"Reports",icon:"📊"}]:[]),
+  ];
+
+  const handleRecord=(entry)=>{
+    // Deduct from appropriate inventory
+    if(entry.sourceType==="fb"){
+      setFbItems(prev=>prev.map(i=>i.id===entry.itemId?{...i,stock:Math.max(0,i.stock-entry.qty)}:i));
+    } else if(entry.sourceType==="glass"){
+      setGlassItems(prev=>prev.map(i=>{
+        if(i.id!==entry.itemId) return i;
+        return entry.location==="kitchen"?{...i,kitchenQty:Math.max(0,i.kitchenQty-entry.qty)}:{...i,frontQty:Math.max(0,i.frontQty-entry.qty)};
+      }));
+    }
+    setWastageLog(prev=>[entry,...prev].slice(0,500));
+    setShowForm(false);
+  };
+
+  if(!ready) return(<div style={{minHeight:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",color:T.muted,fontFamily:SE}}>Loading…</div>);
+
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,fontFamily:SE}}>
+      {/* Header */}
+      <div style={{background:T.navBg,borderBottom:`1px solid ${T.navBorder}`,position:"sticky",top:0,zIndex:100}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px"}}>
+          <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",color:T.muted,fontFamily:MO,fontSize:11,fontWeight:700,flexShrink:0}}
+            onMouseEnter={e=>{e.currentTarget.style.background=T.accentDim;e.currentTarget.style.color=T.accent;}}
+            onMouseLeave={e=>{e.currentTarget.style.background=T.card;e.currentTarget.style.color=T.muted;}}>
+            <span style={{fontSize:14,fontWeight:800}}>‹</span>{!isMobile&&" Modules"}
+          </button>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:700,color:T.accent,fontFamily:SE}}>🗑️ Wastage</div>
+            <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{wastageLog.length} records</div>
+          </div>
+          <ThemeToggle T={T} isDark={isDark} onToggle={onToggle}/>
+          <UserMenu T={T} user={currentUser} onLogout={onBack} isMobile={isMobile}/>
+        </div>
+        <div style={{display:"flex",overflowX:"auto",scrollbarWidth:"none",borderTop:`1px solid ${T.navBorder}`}}>
+          {TABS.map(t=>{
+            const active=tab===t.key;
+            return(<button key={t.key} onClick={()=>setTab(t.key)} style={{flexShrink:0,padding:"8px 14px",border:"none",borderBottom:active?`2px solid ${T.accent}`:"2px solid transparent",background:active?T.accentDim:"transparent",color:active?T.accent:T.muted,fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:MO,whiteSpace:"nowrap"}}>{t.icon} {t.label}</button>);
+          })}
+        </div>
+      </div>
+
+      <div style={{padding:isMobile?"12px":"20px",maxWidth:900,margin:"0 auto"}}>
+
+        {/* RECORD TAB */}
+        {tab==="record"&&(
+          <div>
+            <div style={{display:"flex",gap:10,marginBottom:16,alignItems:"center"}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text}}>Record Wastage</div>
+                <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>Food spoilage or glassware breakage</div>
+              </div>
+              <Btn T={T} v="danger" onClick={()=>setShowForm(true)} s={{flexShrink:0}}>+ Record</Btn>
+            </div>
+            {/* Recent records */}
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {wastageLog.slice(0,10).map((w,i)=>(
+                <WastageCard T={T} key={i} entry={w}/>
+              ))}
+              {!wastageLog.length&&(
+                <div style={{textAlign:"center",padding:48,color:T.muted,fontFamily:SE}}>
+                  <div style={{fontSize:36,marginBottom:12}}>🗑️</div>
+                  <div style={{fontSize:15,fontStyle:"italic"}}>No wastage recorded yet</div>
+                  <div style={{fontSize:12,marginTop:6}}>Tap "+ Record" to log wastage</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* HISTORY TAB */}
+        {tab==="history"&&canViewHistory&&(
+          <WastageHistory T={T} wastageLog={wastageLog} isMobile={isMobile}/>
+        )}
+
+        {/* REPORTS TAB */}
+        {tab==="reports"&&canViewReports&&(
+          <WastageReports T={T} wastageLog={wastageLog} isMobile={isMobile}/>
+        )}
+      </div>
+
+      {showForm&&(
+        <WastageForm T={T} currentUser={currentUser} fbItems={fbItems} glassItems={glassItems}
+          onClose={()=>setShowForm(false)} onSave={handleRecord} isMobile={isMobile}/>
+      )}
+    </div>
+  );
+}
+
+function WastageCard({T,entry}){
+  const [showImg,setShowImg]=useState(false);
+  return(
+    <Card T={T} s={{padding:"14px 16px"}}>
+      <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+        {entry.photoUrl&&(
+          <img src={entry.photoUrl} alt="wastage" onClick={()=>setShowImg(true)}
+            style={{width:56,height:56,objectFit:"cover",borderRadius:8,cursor:"pointer",flexShrink:0,border:`1px solid ${T.border}`}}/>
+        )}
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+            <div>
+              <span style={{fontSize:11,fontWeight:700,fontFamily:MO,padding:"2px 8px",borderRadius:4,marginRight:6,
+                background:entry.sourceType==="fb"?"#fff3cd":"#ffd6d6",
+                color:entry.sourceType==="fb"?"#856404":"#c0392b"}}>
+                {entry.sourceType==="fb"?"F&B":"GLASS"}
+              </span>
+              <span style={{fontSize:11,fontWeight:700,fontFamily:MO,padding:"2px 8px",borderRadius:4,
+                background:T.lowBg,color:T.low}}>
+                {entry.wastageType}
+              </span>
+            </div>
+            <div style={{fontSize:13,fontWeight:800,color:T.low,fontFamily:MO,flexShrink:0}}>-{entry.qty} {entry.unit||""}</div>
+          </div>
+          <div style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:SE,marginBottom:2}}>{entry.itemName}</div>
+          <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:4}}>{entry.staffName} · {entry.date}</div>
+          {entry.explanation&&<div style={{fontSize:12,color:T.text,fontFamily:SE,fontStyle:"italic",marginBottom:4}}>"{entry.explanation}"</div>}
+          {entry.loss>0&&<div style={{fontSize:12,fontWeight:700,color:T.warn,fontFamily:MO}}>Est. loss: Rs {entry.loss.toLocaleString()}</div>}
+        </div>
+      </div>
+      {showImg&&(
+        <div style={{position:"fixed",inset:0,background:"#000c",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setShowImg(false)}>
+          <img src={entry.photoUrl} alt="wastage" style={{maxWidth:"90vw",maxHeight:"90vh",borderRadius:12}}/>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile}){
+  const [sourceType,setSourceType]=useState("fb");
+  const [search,setSearch]=useState("");
+  const [selected,setSelected]=useState(null);
+  const [qty,setQty]=useState(1);
+  const [location,setLocation]=useState("kitchen");
+  const [wastageType,setWastageType]=useState("Expired");
+  const [explanation,setExplanation]=useState("");
+  const [photoUrl,setPhotoUrl]=useState("");
+  const [capturing,setCapturing]=useState(false);
+  const videoRef=useRef(null);
+  const streamRef=useRef(null);
+
+  const items=sourceType==="fb"?fbItems:glassItems;
+  const filtered=useMemo(()=>{
+    if(!search) return [];
+    const q=search.toLowerCase();
+    return items.filter(i=>i.name.toLowerCase().includes(q)||i.code?.toLowerCase().includes(q)||i.shortCode?.toLowerCase().includes(q)).slice(0,6);
+  },[items,search,sourceType]);
+
+  const loss=selected?(qty*(Number(selected.perUnit)||0)):0;
+
+  const startCamera=async()=>{
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+      streamRef.current=stream;
+      if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play();}
+      setCapturing(true);
+    }catch(e){alert("Camera access denied.");}
+  };
+
+  const capturePhoto=()=>{
+    if(!videoRef.current) return;
+    const canvas=document.createElement("canvas");
+    canvas.width=videoRef.current.videoWidth;
+    canvas.height=videoRef.current.videoHeight;
+    canvas.getContext("2d").drawImage(videoRef.current,0,0);
+    setPhotoUrl(canvas.toDataURL("image/jpeg",0.7));
+    streamRef.current?.getTracks().forEach(t=>t.stop());
+    setCapturing(false);
+  };
+
+  const uploadPhoto=(e)=>{
+    const file=e.target.files[0];
+    if(!file) return;
+    const reader=new FileReader();
+    reader.onload=ev=>setPhotoUrl(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const submit=()=>{
+    if(!selected||qty<1) return;
+    onSave({
+      id:uid(),
+      date:nowStr(),
+      sourceType,
+      itemId:selected.id,
+      itemName:selected.name,
+      unit:selected.unit||"",
+      qty,
+      location:sourceType==="glass"?location:null,
+      wastageType,
+      explanation,
+      photoUrl,
+      staffName:currentUser.name,
+      userRole:currentUser.role,
+      loss,
+      perUnit:selected.perUnit||0,
+    });
+  };
+
+  const FB_TYPES=["Expired","Spoiled","Overcooked","Damaged","Other"];
+  const GLASS_TYPES=["Broken","Chipped","Lost","Other"];
+  const types=sourceType==="fb"?FB_TYPES:GLASS_TYPES;
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000a",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <Card T={T} s={{padding:24,width:500,maxWidth:"100%",maxHeight:"95vh",overflowY:"auto"}}>
+        <h2 style={{margin:"0 0 16px",fontSize:18,fontFamily:SE,fontWeight:600,color:T.low}}>🗑️ Record Wastage</h2>
+
+        {/* Source type toggle */}
+        <div style={{display:"flex",gap:8,marginBottom:16}}>
+          {[["fb","🥛 F&B Food"],["glass","🥤 Glassware"]].map(([val,label])=>(
+            <button key={val} onClick={()=>{setSourceType(val);setSelected(null);setSearch("");setWastageType(val==="fb"?"Expired":"Broken");}}
+              style={{flex:1,padding:"10px",borderRadius:8,border:`2px solid ${sourceType===val?T.accent:T.border}`,background:sourceType===val?T.accentDim:T.card,color:sourceType===val?T.accent:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700}}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Item search */}
+        <div style={{marginBottom:12}}>
+          <Label T={T}>Search Item</Label>
+          <Inp T={T} value={search} onChange={v=>{setSearch(v);setSelected(null);}} placeholder="Name or code…"/>
+          {filtered.length>0&&!selected&&(
+            <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,marginTop:4,overflow:"hidden"}}>
+              {filtered.map(i=>(
+                <div key={i.id} onClick={()=>{setSelected(i);setSearch(i.name);}}
+                  style={{padding:"10px 14px",cursor:"pointer",borderBottom:`1px solid ${T.border}`}}
+                  onMouseEnter={e=>e.currentTarget.style.background=T.card2}
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{i.name}</div>
+                  <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>
+                    {sourceType==="fb"?`${i.code} · Stock: ${i.stock}`:`${i.shortCode} · K:${i.kitchenQty} F:${i.frontQty}`}
+                    {i.perUnit?` · Rs ${i.perUnit}/unit`:""}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {selected&&(
+          <>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div>
+                <Label T={T}>Wastage Type</Label>
+                <Sel T={T} value={wastageType} onChange={setWastageType}>
+                  {types.map(t=><option key={t}>{t}</option>)}
+                </Sel>
+              </div>
+              <div>
+                <Label T={T}>Quantity</Label>
+                <Inp T={T} type="number" value={qty} onChange={v=>setQty(Math.max(1,Number(v)))}/>
+              </div>
+              {sourceType==="glass"&&(
+                <div style={{gridColumn:"1/-1"}}>
+                  <Label T={T}>Location</Label>
+                  <Sel T={T} value={location} onChange={setLocation}>
+                    <option value="kitchen">Kitchen (current: {selected.kitchenQty})</option>
+                    <option value="front">Front (current: {selected.frontQty})</option>
+                  </Sel>
+                </div>
+              )}
+            </div>
+
+            {/* Loss estimate */}
+            {loss>0&&(
+              <div style={{background:T.lowBg,border:`1px solid ${T.low}44`,borderRadius:8,padding:"10px 14px",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:12,color:T.muted,fontFamily:MO}}>Estimated loss</span>
+                <span style={{fontSize:16,fontWeight:800,color:T.low,fontFamily:MO}}>Rs {loss.toLocaleString()}</span>
+              </div>
+            )}
+
+            {/* Explanation */}
+            <div style={{marginBottom:12}}>
+              <Label T={T}>Explanation</Label>
+              <textarea value={explanation} onChange={e=>setExplanation(e.target.value)}
+                placeholder="What happened? e.g. Milk left out overnight, glass dropped during service…"
+                style={{width:"100%",minHeight:72,padding:"10px 12px",background:T.bg,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:13,fontFamily:SE,resize:"vertical",outline:"none",boxSizing:"border-box",lineHeight:1.5}}/>
+            </div>
+
+            {/* Photo */}
+            <div style={{marginBottom:16}}>
+              <Label T={T}>Photo Evidence</Label>
+              {capturing?(
+                <div style={{position:"relative",borderRadius:10,overflow:"hidden",marginBottom:8}}>
+                  <video ref={videoRef} style={{width:"100%",maxHeight:200,objectFit:"cover",display:"block"}} muted playsInline/>
+                  <button onClick={capturePhoto} style={{position:"absolute",bottom:10,left:"50%",transform:"translateX(-50%)",background:"#fff",border:"none",borderRadius:20,padding:"8px 20px",cursor:"pointer",fontFamily:MO,fontSize:13,fontWeight:700,color:"#c0392b"}}>📸 Capture</button>
+                </div>
+              ):photoUrl?(
+                <div style={{position:"relative",marginBottom:8}}>
+                  <img src={photoUrl} alt="wastage" style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:8,border:`1px solid ${T.border}`}}/>
+                  <button onClick={()=>setPhotoUrl("")} style={{position:"absolute",top:6,right:6,background:"#000a",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",color:"#fff",fontSize:11}}>✕ Remove</button>
+                </div>
+              ):(
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={startCamera} style={{flex:1,padding:"10px",border:`1px dashed ${T.border}`,borderRadius:8,background:T.card,color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700}}>📷 Take Photo</button>
+                  <label style={{flex:1,padding:"10px",border:`1px dashed ${T.border}`,borderRadius:8,background:T.card,color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+                    🖼 Gallery<input type="file" accept="image/*" onChange={uploadPhoto} style={{display:"none"}}/>
+                  </label>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <Btn T={T} onClick={onClose}>Cancel</Btn>
+          <Btn T={T} v="danger" onClick={submit} disabled={!selected||qty<1||!explanation}>Submit Wastage</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function WastageHistory({T,wastageLog,isMobile}){
+  const [filter,setFilter]=useState("all");
+  const filtered=filter==="all"?wastageLog:wastageLog.filter(w=>w.sourceType===filter);
+  return(
+    <div>
+      <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{flex:1}}><div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text}}>History</div><div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{filtered.length} records</div></div>
+        <div style={{display:"flex",gap:6}}>
+          {[["all","All"],["fb","F&B"],["glass","Glass"]].map(([val,label])=>(
+            <button key={val} onClick={()=>setFilter(val)} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${filter===val?T.accent:T.border}`,background:filter===val?T.accentDim:"transparent",color:filter===val?T.accent:T.muted,cursor:"pointer",fontFamily:MO,fontSize:11,fontWeight:700}}>{label}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {filtered.map((w,i)=><WastageCard T={T} key={i} entry={w}/>)}
+        {!filtered.length&&<div style={{color:T.muted,padding:40,textAlign:"center",fontFamily:SE}}>No records found</div>}
+      </div>
+    </div>
+  );
+}
+
+function WastageReports({T,wastageLog,isMobile}){
+  const totalRecords=wastageLog.length;
+  const totalLoss=wastageLog.reduce((s,w)=>s+(w.loss||0),0);
+  const fbCount=wastageLog.filter(w=>w.sourceType==="fb").length;
+  const glassCount=wastageLog.filter(w=>w.sourceType==="glass").length;
+
+  const byType={};
+  wastageLog.forEach(w=>{byType[w.wastageType]=(byType[w.wastageType]||0)+1;});
+
+  const byPerson={};
+  wastageLog.forEach(w=>{
+    if(!byPerson[w.staffName]) byPerson[w.staffName]={count:0,loss:0};
+    byPerson[w.staffName].count++;
+    byPerson[w.staffName].loss+=(w.loss||0);
+  });
+
+  const byItem={};
+  wastageLog.forEach(w=>{
+    if(!byItem[w.itemName]) byItem[w.itemName]={count:0,loss:0,qty:0};
+    byItem[w.itemName].count++;
+    byItem[w.itemName].loss+=(w.loss||0);
+    byItem[w.itemName].qty+=(w.qty||0);
+  });
+
+  return(
+    <div>
+      <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:14}}>Reports</div>
+
+      {/* Summary cards */}
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:12,marginBottom:16}}>
+        {[["Total Records",totalRecords,T.accent],["F&B Wastage",fbCount,T.warn],["Glass Breakage",glassCount,T.low],["Total Loss",`Rs ${totalLoss.toLocaleString()}`,T.low]].map(([label,val,color])=>(
+          <Card T={T} key={label} s={{padding:"16px",textAlign:"center"}}>
+            <div style={{fontSize:val.toString().length>6?16:24,fontWeight:800,color,fontFamily:MO}}>{val}</div>
+            <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginTop:4,textTransform:"uppercase",letterSpacing:"0.08em"}}>{label}</div>
+          </Card>
+        ))}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12,marginBottom:12}}>
+        {/* By type */}
+        <Card T={T} s={{padding:16}}>
+          <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>By Wastage Type</div>
+          {Object.entries(byType).sort((a,b)=>b[1]-a[1]).map(([type,count],i,arr)=>(
+            <div key={type} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
+              <span style={{fontSize:13,color:T.text,fontFamily:SE}}>{type}</span>
+              <span style={{fontSize:13,fontWeight:700,color:T.low,fontFamily:MO}}>{count}</span>
+            </div>
+          ))}
+          {!Object.keys(byType).length&&<div style={{color:T.muted,fontFamily:MO,fontSize:12}}>No data yet</div>}
+        </Card>
+
+        {/* By person */}
+        <Card T={T} s={{padding:16}}>
+          <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>By Staff Member</div>
+          {Object.entries(byPerson).sort((a,b)=>b[1].count-a[1].count).map(([name,data],i,arr)=>(
+            <div key={name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
+              <span style={{fontSize:13,color:T.text,fontFamily:SE}}>{name}</span>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.low,fontFamily:MO}}>{data.count} records</div>
+                {data.loss>0&&<div style={{fontSize:11,color:T.warn,fontFamily:MO}}>Rs {data.loss.toLocaleString()}</div>}
+              </div>
+            </div>
+          ))}
+          {!Object.keys(byPerson).length&&<div style={{color:T.muted,fontFamily:MO,fontSize:12}}>No data yet</div>}
+        </Card>
+      </div>
+
+      {/* By item */}
+      <Card T={T} s={{padding:16}}>
+        <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Most Wasted Items</div>
+        {Object.entries(byItem).sort((a,b)=>b[1].qty-a[1].qty).slice(0,10).map(([name,data],i,arr)=>(
+          <div key={name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
+            <div>
+              <div style={{fontSize:13,color:T.text,fontFamily:SE}}>{name}</div>
+              <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{data.count} records · {data.qty} units</div>
+            </div>
+            {data.loss>0&&<div style={{fontSize:13,fontWeight:700,color:T.low,fontFamily:MO}}>Rs {data.loss.toLocaleString()}</div>}
+          </div>
+        ))}
+        {!Object.keys(byItem).length&&<div style={{color:T.muted,fontFamily:MO,fontSize:12}}>No data yet</div>}
       </Card>
     </div>
   );
@@ -2512,10 +3093,11 @@ export default function App(){
   if(!currentUser) return(<><LoginScreen T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} users={users} setUsers={setUsers} onLogin={handleLogin}/><CreatorStamp T={T}/></>);
   if(!activeModule) return(<ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m)=>{window.history.pushState({module:m},"");setActiveModule(m);}} onLogout={handleLogout}/>);
   if(activeModule==="glassware") return(<GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}}/>);
-  if(activeModule==="wastage"||activeModule==="grn") return(
+  if(activeModule==="wastage") return(<WastageModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}} fbItems={items} glassItems={[]} setFbItems={setItems} setGlassItems={()=>{}}/>);
+  if(activeModule==="grn") return(
     <div style={{minHeight:"100vh",background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:SE,padding:24}}>
-      <div style={{fontSize:48,marginBottom:16}}>{activeModule==="wastage"?"🗑️":"📋"}</div>
-      <div style={{fontSize:24,fontWeight:600,color:T.text,marginBottom:8}}>{activeModule==="wastage"?"Wastage":"GRN Scanner"}</div>
+      <div style={{fontSize:48,marginBottom:16}}>📋</div>
+      <div style={{fontSize:24,fontWeight:600,color:T.text,marginBottom:8}}>GRN Scanner</div>
       <div style={{fontSize:13,color:T.muted,fontFamily:MO,marginBottom:24,textAlign:"center",maxWidth:340}}>This module is coming soon!</div>
       <button onClick={()=>setActiveModule(null)} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"12px 28px",cursor:"pointer",fontSize:14,fontFamily:SE,fontWeight:600}}>← Back to Modules</button>
     </div>
