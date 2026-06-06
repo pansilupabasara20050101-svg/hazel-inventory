@@ -47,8 +47,8 @@ const LIGHT={
 };
 
 const ROLES={
-  admin:{label:"Admin",tabs:["out","in","inv","count","var","po","hist","reports","users","devices"],canEditItems:true,canEditUsers:true,canEditDevices:true,canViewReports:true},
-  supervisor:{label:"Supervisor",tabs:["out","in","inv","count","var","po","hist","reports"],canEditItems:true,canViewReports:true},
+  admin:{label:"Admin",tabs:["out","in","inv","count","var","po","hist","reports","audit","users","devices"],canEditItems:true,canEditUsers:true,canEditDevices:true,canViewReports:true},
+  supervisor:{label:"Supervisor",tabs:["out","in","inv","count","var","po","hist","reports","audit"],canEditItems:true,canViewReports:true},
   counter:{label:"Stock Counter",tabs:["out","in","count","hist"],canEditItems:false},
   staff:{label:"Staff",tabs:["out","in"],canEditItems:false},
 };
@@ -183,6 +183,15 @@ function PinUnlock({T,storedUser,onSuccess,onUsePassword}){
     }
   };
 
+  useEffect(()=>{
+    const handler=(e)=>{
+      if(e.key>="0"&&e.key<="9") tap(e.key);
+      else if(e.key==="Backspace") tap("del");
+    };
+    window.addEventListener("keydown",handler);
+    return()=>window.removeEventListener("keydown",handler);
+  },[pin]);
+
   return(
     <div style={{minHeight:"100vh",background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20,fontFamily:SE}}>
       <div style={{textAlign:"center",marginBottom:28}}>
@@ -236,6 +245,25 @@ function PinSetupModal({T,user,onClose,onSave}){
       }
     }
   };
+
+  // Keyboard support for PIN setup
+  useEffect(()=>{
+    const handler=(e)=>{
+      if(e.key>="0"&&e.key<="9") tap(e.key);
+      else if(e.key==="Backspace") tap("del");
+    };
+    window.addEventListener("keydown",handler);
+    return()=>window.removeEventListener("keydown",handler);
+  },[step,pin1,pin2]);
+
+  useEffect(()=>{
+    const handler=(e)=>{
+      if(e.key>="0"&&e.key<="9") tap(e.key);
+      else if(e.key==="Backspace") tap("del");
+    };
+    window.addEventListener("keydown",handler);
+    return()=>window.removeEventListener("keydown",handler);
+  },[pin1,pin2,step]);
 
   const setupBiometric=async()=>{
     try{
@@ -594,7 +622,7 @@ function InventoryTab({T,items,setItems,canEdit}){
         </table>
         {filtered.length===0&&<div style={{padding:40,textAlign:"center",color:T.muted,fontStyle:"italic",fontFamily:SE}}>No items found</div>}
       </Card>
-      {canEdit&&(editItem||showAdd)&&<ItemModal T={T} item={editItem} onClose={()=>{setEditItem(null);setShowAdd(false);}} onSave={form=>{if(form._delete){setItems(prev=>prev.filter(i=>i.id!==form.id));}else if(form.id){setItems(prev=>prev.map(i=>i.id===form.id?form:i));}else{setItems(prev=>[...prev,{...form,id:form.code||uid()}]);}setEditItem(null);setShowAdd(false);}}/>}
+      {canEdit&&(editItem||showAdd)&&<ItemModal T={T} item={editItem} onClose={()=>{setEditItem(null);setShowAdd(false);}} onSave={form=>{if(form._delete){recordAudit(setAuditLog,"delete","fb",form.name,currentUser,form,null);setItems(prev=>prev.filter(i=>i.id!==form.id));}else if(form.id){const old=items.find(i=>i.id===form.id);recordAudit(setAuditLog,"update","fb",form.name,currentUser,old,form);setItems(prev=>prev.map(i=>i.id===form.id?form:i));}else{recordAudit(setAuditLog,"create","fb",form.name,currentUser,null,form);setItems(prev=>[...prev,{...form,id:form.code||uid()}]);}setEditItem(null);setShowAdd(false);}}/>}
     </div>
   );
 }
@@ -949,6 +977,7 @@ function BarChart({T,data,maxVal}){
 
 function ReportsTab({T,movements,countHistory}){
   const isMobile=useIsMobile();
+  const {filtered:filteredMov,startDate,endDate,setStartDate,setEndDate,clear}=useDateFilter(movements);
   const [preset,setPreset]=useState("7d");
   const [activeSection,setActiveSection]=useState("overview");
 
@@ -973,16 +1002,16 @@ function ReportsTab({T,movements,countHistory}){
 
   const topItems=useMemo(()=>{
     const map={};
-    filtered.forEach(m=>{if(!map[m.code]) map[m.code]={code:m.code,name:m.itemName,dept:m.dept,out:0,in:0,outQty:0,inQty:0};if(m.type==="out"){map[m.code].out++;map[m.code].outQty+=Number(m.qty)||1;}else{map[m.code].in++;map[m.code].inQty+=Number(m.qty)||1;}});
+    filteredMov.forEach(m=>{if(!map[m.code]) map[m.code]={code:m.code,name:m.itemName,dept:m.dept,out:0,in:0,outQty:0,inQty:0};if(m.type==="out"){map[m.code].out++;map[m.code].outQty+=Number(m.qty)||1;}else{map[m.code].in++;map[m.code].inQty+=Number(m.qty)||1;}});
     return Object.values(map).map(i=>({...i,netQty:i.inQty-i.outQty})).sort((a,b)=>Math.abs(b.outQty+b.inQty)-Math.abs(a.outQty+a.inQty)).slice(0,15);
-  },[filtered]);
+  },[filteredMov]);
   const maxItemVal=topItems.reduce((mx,i)=>Math.max(mx,i.out,i.in),0);
 
   const personStats=useMemo(()=>{
     const map={};
-    filtered.forEach(m=>{const k=m.personName||"Unknown";if(!map[k]) map[k]={name:k,role:m.userRole,ins:0,outs:0,total:0,inQty:0,outQty:0};if(m.type==="in"){map[k].ins++;map[k].inQty+=Number(m.qty)||1;}else{map[k].outs++;map[k].outQty+=Number(m.qty)||1;}map[k].total++;});
+    filteredMov.forEach(m=>{const k=m.personName||"Unknown";if(!map[k]) map[k]={name:k,role:m.userRole,ins:0,outs:0,total:0,inQty:0,outQty:0};if(m.type==="in"){map[k].ins++;map[k].inQty+=Number(m.qty)||1;}else{map[k].outs++;map[k].outQty+=Number(m.qty)||1;}map[k].total++;});
     return Object.values(map).map(p=>({...p,netQty:p.inQty-p.outQty})).sort((a,b)=>b.total-a.total);
-  },[filtered]);
+  },[filteredMov]);
 
   const deptStats=useMemo(()=>{
     const front=filtered.filter(m=>m.dept==="Front");
@@ -1018,11 +1047,16 @@ function ReportsTab({T,movements,countHistory}){
       </div>
 
       {/* Section nav */}
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
         {navBtn("overview","Overview","📊")}
         {navBtn("items","Top Items","🔥")}
         {navBtn("people","By Person","👤")}
         {navBtn("counts","Count Sessions","✏")}
+      </div>
+      <div style={{background:T.card2,borderRadius:8,padding:"10px 14px",marginBottom:16,border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:10,fontWeight:700,color:T.muted,fontFamily:MO,marginBottom:8,letterSpacing:"0.08em"}}>FILTER BY DATE</div>
+        <DateRangePicker T={T} startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} onClear={clear}/>
+        {(startDate||endDate)&&<div style={{fontSize:11,color:T.accent,fontFamily:MO,marginTop:6}}>Showing {filteredMov.length} of {movements.length} movements</div>}
       </div>
 
       {activeSection==="overview"&&(
@@ -1615,8 +1649,8 @@ function DevicesTab({T,devices,setDevices,loginHistory}){
 }
 
 // ── ROOT APP ──────────────────────────────────────────────────────────────────
-const ALL_TABS=[{key:"out",label:"Stock Out",icon:"↑"},{key:"in",label:"Stock In",icon:"↓"},{key:"inv",label:"Inventory",icon:"📦"},{key:"count",label:"Count",icon:"✏"},{key:"var",label:"Variance",icon:"≠"},{key:"po",label:"Order",icon:"🛒"},{key:"hist",label:"History",icon:"📋"},{key:"reports",label:"Reports",icon:"📈"},{key:"users",label:"Users",icon:"👥"},{key:"devices",label:"Devices",icon:"🖥"}];
-const tabColor=(k,T)=>({out:T.low,in:T.ok,inv:T.blue,count:T.warn,var:T.purple,po:T.accent,hist:T.muted,reports:T.blue,users:T.purple,devices:T.ok}[k]||T.muted);
+const ALL_TABS=[{key:"out",label:"Stock Out",icon:"↑"},{key:"in",label:"Stock In",icon:"↓"},{key:"inv",label:"Inventory",icon:"📦"},{key:"count",label:"Count",icon:"✏"},{key:"var",label:"Variance",icon:"≠"},{key:"po",label:"Order",icon:"🛒"},{key:"hist",label:"History",icon:"📋"},{key:"reports",label:"Reports",icon:"📈"},{key:"audit",label:"Audit",icon:"🔍"},{key:"users",label:"Users",icon:"👥"},{key:"devices",label:"Devices",icon:"🖥"}];
+const tabColor=(k,T)=>({out:T.low,in:T.ok,inv:T.blue,count:T.warn,var:T.purple,po:T.accent,hist:T.muted,audit:T.purple,reports:T.blue,users:T.purple,devices:T.ok}[k]||T.muted);
 
 // ── QR CODE COMPONENTS ───────────────────────────────────────────────────────
 function useQRCode(text, size=120){
@@ -1964,7 +1998,7 @@ function GlassTransferModal({T,items,onClose,onSave}){
   );
 }
 
-function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
+function GlasswareModule({T,isDark,onToggle,currentUser,onBack,setAuditLog=()=>{},auditLog=[]}){
   const isMobile=useIsMobile();
   const [items,setItems]=useState([]);
   const [movements,setMovements]=useState([]);
@@ -2057,10 +2091,11 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
     {key:"count",label:"Count",icon:"🔢"},
     {key:"history",label:"History",icon:"📖"},
     {key:"reports",label:"Reports",icon:"📊"},
+    {key:"audit",label:"Audit",icon:"🔍"},
   ].filter(t=>{
     if(currentUser.role==="staff") return ["breakage","issue"].includes(t.key);
     if(currentUser.role==="counter") return ["breakage","issue","count","history"].includes(t.key);
-    if(currentUser.role==="supervisor") return ["inventory","breakage","issue","transfer","count","history","reports"].includes(t.key);
+    if(currentUser.role==="supervisor") return ["inventory","breakage","issue","transfer","count","history","reports","audit"].includes(t.key);
     return true;// admin
   });
 
@@ -2080,7 +2115,6 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
             <div style={{fontSize:14,fontWeight:700,color:T.accent,fontFamily:SE}}>🥤 Glassware & Utensils</div>
             {lowItems.length>0&&<div style={{fontSize:10,color:T.low,fontFamily:MO,fontWeight:700}}>⚠ {lowItems.length} low stock</div>}
           </div>
-          <button onClick={()=>setShowQRScanner(true)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 10px",cursor:"pointer",color:T.muted,fontSize:12,fontFamily:MO,fontWeight:700}}>📷 Scan</button>
           <ThemeToggle T={T} isDark={isDark} onToggle={onToggle}/>
           <UserMenu T={T} user={currentUser} onLogout={onBack} isMobile={isMobile}/>
         </div>
@@ -2157,8 +2191,9 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
         {/* BREAKAGE TAB */}
         {tab==="breakage"&&(
           <div>
-            <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center"}}>
+            <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center",flexWrap:"wrap"}}>
               <div style={{flex:1}}><div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text}}>Breakage</div><div style={{fontSize:11,color:T.muted,fontFamily:MO}}>Record broken or lost items</div></div>
+              <Btn T={T} v="ghost" onClick={()=>setShowQRScanner(true)} s={{fontSize:12}}>📷 Scan QR</Btn>
               <Btn T={T} v="danger" onClick={()=>setShowBreakage(true)}>+ Record Breakage</Btn>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -2178,8 +2213,9 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
         {/* ISSUE TAB */}
         {tab==="issue"&&(
           <div>
-            <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center"}}>
+            <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center",flexWrap:"wrap"}}>
               <div style={{flex:1}}><div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text}}>Issue</div><div style={{fontSize:11,color:T.muted,fontFamily:MO}}>Record newly issued items to Kitchen or Front</div></div>
+              <Btn T={T} v="ghost" onClick={()=>setShowQRScanner(true)} s={{fontSize:12}}>📷 Scan QR</Btn>
               <Btn T={T} v="primary" onClick={()=>setShowIssue(true)}>+ Issue Items</Btn>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -2199,8 +2235,9 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
         {/* TRANSFER TAB */}
         {tab==="transfer"&&(
           <div>
-            <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center"}}>
+            <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center",flexWrap:"wrap"}}>
               <div style={{flex:1}}><div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text}}>Transfer</div><div style={{fontSize:11,color:T.muted,fontFamily:MO}}>Move items between Kitchen and Front</div></div>
+              <Btn T={T} v="ghost" onClick={()=>setShowQRScanner(true)} s={{fontSize:12}}>📷 Scan QR</Btn>
               <Btn T={T} v="primary" onClick={()=>setShowTransfer(true)}>+ Transfer</Btn>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -2248,15 +2285,19 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack}){
         {tab==="reports"&&(
           <GlassReportsTab T={T} items={items} movements={movements} isMobile={isMobile}/>
         )}
+        {/* AUDIT TAB */}
+        {tab==="audit"&&(currentUser.role==="admin"||currentUser.role==="supervisor")&&(
+          <AuditLogTab T={T} auditLog={auditLog.filter(e=>e.module==="glass")} isMobile={isMobile}/>
+        )}
       </div>
 
       {/* Modals */}
       {showBreakage&&<GlassBreakageModal T={T} items={typeof showBreakage==="object"?[showBreakage,...items.filter(i=>i.id!==showBreakage.id)]:items} onClose={()=>setShowBreakage(false)} onSave={handleBreakage} currentUser={currentUser}/>}
       {showIssue&&<GlassIssueModal T={T} items={typeof showIssue==="object"?[showIssue,...items.filter(i=>i.id!==showIssue.id)]:items} onClose={()=>setShowIssue(false)} onSave={handleIssue}/>}
       {showTransfer&&<GlassTransferModal T={T} items={items} onClose={()=>setShowTransfer(false)} onSave={handleTransfer}/>}
-      {(showAdd||editItem)&&canEdit&&<GlassItemModal T={T} item={editItem} canDelete={canDelete} onClose={()=>{setShowAdd(false);setEditItem(null);}} onSave={form=>{if(form._delete){setItems(prev=>prev.filter(i=>i.id!==form.id));}else if(form.id){setItems(prev=>prev.map(i=>i.id===form.id?form:i));}else{setItems(prev=>[...prev,{...form,id:uid()}]);}setShowAdd(false);setEditItem(null);}}/> }
+      {(showAdd||editItem)&&canEdit&&<GlassItemModal T={T} item={editItem} canDelete={canDelete} onClose={()=>{setShowAdd(false);setEditItem(null);}} onSave={form=>{if(form._delete){recordAudit(setAuditLog,"delete","glass",form.name,currentUser,form,null);setItems(prev=>prev.filter(i=>i.id!==form.id));}else if(form.id){const prev2=items.find(i=>i.id===form.id);recordAudit(setAuditLog,"update","glass",form.name,currentUser,prev2,form);setItems(prev=>prev.map(i=>i.id===form.id?form:i));}else{recordAudit(setAuditLog,"create","glass",form.name,currentUser,null,form);setItems(prev=>[...prev,{...form,id:uid()}]);}setShowAdd(false);setEditItem(null);}}/> }
       {showQR&&<QRLabel T={T} item={showQR} onClose={()=>setShowQR(null)}/>}
-      {showQRScanner&&<QRScanner T={T} items={items} onClose={()=>setShowQRScanner(false)} onFound={(item,code)=>{setShowQRScanner(false);if(item){setShowBreakage(item);} else alert("Item not found for code: "+code);}}/>}
+      {showQRScanner&&<QRScanner T={T} items={items} onClose={()=>setShowQRScanner(false)} onFound={(item,code)=>{setShowQRScanner(false);if(item){if(tab==="issue") setShowIssue(item);else if(tab==="transfer") setShowTransfer(item);else setShowBreakage(item);}else alert("Item not found for code: "+code);}}/>}
     </div>
   );
 }
@@ -2311,16 +2352,22 @@ function GlassCountTab({T,items,setItems,currentUser,isMobile}){
 }
 
 function GlassReportsTab({T,items,movements,isMobile}){
+  const {filtered:filteredMov,startDate,endDate,setStartDate,setEndDate,clear}=useDateFilter(movements);
   const totalItems=items.length;
   const lowItems=items.filter(i=>i.minQty>0&&(i.kitchenQty+i.frontQty)<i.minQty).length;
   const totalBreakage=movements.filter(m=>m.type==="breakage").reduce((s,m)=>s+(m.qty||0),0);
   const totalIssued=movements.filter(m=>m.type==="issue").reduce((s,m)=>s+(m.qty||0),0);
   const breakageByItem={};
-  movements.filter(m=>m.type==="breakage").forEach(m=>{breakageByItem[m.itemName]=(breakageByItem[m.itemName]||0)+m.qty;});
+  filteredMov.filter(m=>m.type==="breakage").forEach(m=>{breakageByItem[m.itemName]=(breakageByItem[m.itemName]||0)+m.qty;});
   const topBreakage=Object.entries(breakageByItem).sort((a,b)=>b[1]-a[1]).slice(0,5);
   return(
     <div>
-      <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:14}}>Reports</div>
+      <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Reports</div>
+      <div style={{background:T.card2,borderRadius:8,padding:"10px 14px",marginBottom:14,border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:10,fontWeight:700,color:T.muted,fontFamily:MO,marginBottom:8,letterSpacing:"0.08em"}}>FILTER BY DATE</div>
+        <DateRangePicker T={T} startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} onClear={clear}/>
+        {(startDate||endDate)&&<div style={{fontSize:11,color:T.accent,fontFamily:MO,marginTop:6}}>Filtered: {filteredMov.length} of {movements.length} movements</div>}
+      </div>
       <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:12,marginBottom:16}}>
         {[["Total Items",totalItems,T.accent],["Low Stock",lowItems,T.low],["Total Broken",totalBreakage,T.warn],["Total Issued",totalIssued,T.ok]].map(([label,val,color])=>(
           <Card T={T} key={label} s={{padding:"16px",textAlign:"center"}}>
@@ -2513,6 +2560,10 @@ function WastageCard({T,entry}){
 
 function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile}){
   const [sourceType,setSourceType]=useState("fb");
+  const [entryMode,setEntryMode]=useState("inventory");// "inventory" or "free"
+  const [freeItemName,setFreeItemName]=useState("");
+  const [freeUnit,setFreeUnit]=useState("Nos");
+  const [freeLoss,setFreeLoss]=useState(0);
   const [search,setSearch]=useState("");
   const [selected,setSelected]=useState(null);
   const [qty,setQty]=useState(1);
@@ -2562,28 +2613,16 @@ function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile})
   };
 
   const submit=()=>{
-    if(!selected||qty<1) return;
-    onSave({
-      id:uid(),
-      date:nowStr(),
-      sourceType,
-      itemId:selected.id,
-      itemName:selected.name,
-      unit:selected.unit||"",
-      qty,
-      location:sourceType==="glass"?location:null,
-      wastageType,
-      explanation,
-      photoUrl,
-      staffName:currentUser.name,
-      userRole:currentUser.role,
-      loss,
-      perUnit:selected.perUnit||0,
-    });
+    if(entryMode==="free"){
+      if(!freeItemName||!explanation) return;
+      onSave({id:uid(),date:nowStr(),sourceType:"free",itemId:null,itemName:freeItemName,unit:freeUnit,qty,location:null,wastageType,explanation,photoUrl,staffName:currentUser.name,userRole:currentUser.role,loss:freeLoss,perUnit:0});
+    } else {
+      onSave({id:uid(),date:nowStr(),sourceType,itemId:selected.id,itemName:selected.name,unit:selected.unit||"",qty,location:sourceType==="glass"?location:null,wastageType,explanation,photoUrl,staffName:currentUser.name,userRole:currentUser.role,loss,perUnit:selected.perUnit||0});
+    }
   };
 
-  const FB_TYPES=["Expired","Spoiled","Overcooked","Damaged","Other"];
-  const GLASS_TYPES=["Broken","Chipped","Lost","Other"];
+  const FB_TYPES=["Expired","Spoiled","Overcooked","Burnt","Damaged","Prep Waste","Leftover","Other"];
+  const GLASS_TYPES=["Broken","Chipped","Lost","Cracked","Other"];
   const types=sourceType==="fb"?FB_TYPES:GLASS_TYPES;
 
   return(
@@ -2591,18 +2630,41 @@ function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile})
       <Card T={T} s={{padding:24,width:500,maxWidth:"100%",maxHeight:"95vh",overflowY:"auto"}}>
         <h2 style={{margin:"0 0 16px",fontSize:18,fontFamily:SE,fontWeight:600,color:T.low}}>🗑️ Record Wastage</h2>
 
-        {/* Source type toggle */}
-        <div style={{display:"flex",gap:8,marginBottom:16}}>
+        {/* Entry mode toggle */}
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          {[["inventory","📦 From Inventory"],["free","✏️ Free Entry"]].map(([val,label])=>(
+            <button key={val} onClick={()=>{setEntryMode(val);setSelected(null);setSearch("");setFreeItemName("");}}
+              style={{flex:1,padding:"8px",borderRadius:8,border:`2px solid ${entryMode===val?T.accent:T.border}`,background:entryMode===val?T.accentDim:T.card,color:entryMode===val?T.accent:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700}}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Source type toggle - only for inventory mode */}
+        {entryMode==="inventory"&&<div style={{display:"flex",gap:8,marginBottom:16}}>
           {[["fb","🥛 F&B Food"],["glass","🥤 Glassware"]].map(([val,label])=>(
             <button key={val} onClick={()=>{setSourceType(val);setSelected(null);setSearch("");setWastageType(val==="fb"?"Expired":"Broken");}}
               style={{flex:1,padding:"10px",borderRadius:8,border:`2px solid ${sourceType===val?T.accent:T.border}`,background:sourceType===val?T.accentDim:T.card,color:sourceType===val?T.accent:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700}}>
               {label}
             </button>
           ))}
-        </div>
+        </div>}
 
-        {/* Item search */}
-        <div style={{marginBottom:12}}>
+        {entryMode==="free"&&<div style={{background:T.warnBg,border:`1px solid ${T.warn}44`,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:T.warn,fontFamily:MO,lineHeight:1.5}}>⚠️ <strong>Free Entry Mode</strong> — Use this for food prepared in the kitchen that is not tracked in the inventory system (e.g. leftover rice, prep trimmings, burnt dishes). This will NOT deduct from any inventory.</div>}
+
+        {/* Free entry fields */}
+        {entryMode==="free"&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+            <div style={{gridColumn:"1/-1"}}><Label T={T}>Item / Food Name</Label><Inp T={T} value={freeItemName} onChange={setFreeItemName} placeholder="e.g. Leftover Arabiata, Burnt Toast…"/></div>
+            <div><Label T={T}>Wastage Type</Label><Sel T={T} value={wastageType} onChange={setWastageType}><option>Expired</option><option>Spoiled</option><option>Overcooked</option><option>Leftover</option><option>Burnt</option><option>Damaged</option><option>Other</option></Sel></div>
+            <div><Label T={T}>Quantity</Label><Inp T={T} type="number" value={qty} onChange={v=>setQty(Math.max(1,Number(v)))}/></div>
+            <div><Label T={T}>Unit</Label><Inp T={T} value={freeUnit} onChange={setFreeUnit} placeholder="e.g. kg, portions, plates"/></div>
+            <div><Label T={T}>Est. Loss (Rs)</Label><Inp T={T} type="number" value={freeLoss} onChange={v=>setFreeLoss(Number(v))} placeholder="0"/></div>
+          </div>
+        )}
+
+        {/* Item search - only in inventory mode */}
+        {entryMode==="inventory"&&<div style={{marginBottom:12}}>
           <Label T={T}>Search Item</Label>
           <Inp T={T} value={search} onChange={v=>{setSearch(v);setSelected(null);}} placeholder="Name or code…"/>
           {filtered.length>0&&!selected&&(
@@ -2657,7 +2719,7 @@ function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile})
 
             {/* Explanation */}
             <div style={{marginBottom:12}}>
-              <Label T={T}>Explanation</Label>
+              <Label T={T}>Explanation <span style={{color:T.low,fontSize:10,fontFamily:MO}}>* required</span></Label>
               <textarea value={explanation} onChange={e=>setExplanation(e.target.value)}
                 placeholder="What happened? e.g. Milk left out overnight, glass dropped during service…"
                 style={{width:"100%",minHeight:72,padding:"10px 12px",background:T.bg,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:13,fontFamily:SE,resize:"vertical",outline:"none",boxSizing:"border-box",lineHeight:1.5}}/>
@@ -2690,7 +2752,7 @@ function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile})
 
         <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
           <Btn T={T} onClick={onClose}>Cancel</Btn>
-          <Btn T={T} v="danger" onClick={submit} disabled={!selected||qty<1||!explanation}>Submit Wastage</Btn>
+          <Btn T={T} v="danger" onClick={submit} disabled={(entryMode==="inventory"&&!selected)||qty<1||!explanation||(entryMode==="free"&&!freeItemName)}>Submit Wastage</Btn>
         </div>
       </Card>
     </div>
@@ -2719,23 +2781,24 @@ function WastageHistory({T,wastageLog,isMobile}){
 }
 
 function WastageReports({T,wastageLog,isMobile}){
-  const totalRecords=wastageLog.length;
-  const totalLoss=wastageLog.reduce((s,w)=>s+(w.loss||0),0);
-  const fbCount=wastageLog.filter(w=>w.sourceType==="fb").length;
-  const glassCount=wastageLog.filter(w=>w.sourceType==="glass").length;
+  const {filtered:filteredLog,startDate,endDate,setStartDate,setEndDate,clear}=useDateFilter(wastageLog);
+  const totalRecords=filteredLog.length;
+  const totalLoss=filteredLog.reduce((s,w)=>s+(w.loss||0),0);
+  const fbCount=filteredLog.filter(w=>w.sourceType==="fb").length;
+  const glassCount=filteredLog.filter(w=>w.sourceType==="glass").length;
 
   const byType={};
-  wastageLog.forEach(w=>{byType[w.wastageType]=(byType[w.wastageType]||0)+1;});
+  filteredLog.forEach(w=>{byType[w.wastageType]=(byType[w.wastageType]||0)+1;});
 
   const byPerson={};
-  wastageLog.forEach(w=>{
+  filteredLog.forEach(w=>{
     if(!byPerson[w.staffName]) byPerson[w.staffName]={count:0,loss:0};
     byPerson[w.staffName].count++;
     byPerson[w.staffName].loss+=(w.loss||0);
   });
 
   const byItem={};
-  wastageLog.forEach(w=>{
+  filteredLog.forEach(w=>{
     if(!byItem[w.itemName]) byItem[w.itemName]={count:0,loss:0,qty:0};
     byItem[w.itemName].count++;
     byItem[w.itemName].loss+=(w.loss||0);
@@ -2744,7 +2807,12 @@ function WastageReports({T,wastageLog,isMobile}){
 
   return(
     <div>
-      <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:14}}>Reports</div>
+      <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Reports</div>
+      <div style={{background:T.card2,borderRadius:8,padding:"10px 14px",marginBottom:14,border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:10,fontWeight:700,color:T.muted,fontFamily:MO,marginBottom:8,letterSpacing:"0.08em"}}>FILTER BY DATE</div>
+        <DateRangePicker T={T} startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} onClear={clear}/>
+        {(startDate||endDate)&&<div style={{fontSize:11,color:T.accent,fontFamily:MO,marginTop:6}}>Filtered: {filteredLog.length} of {wastageLog.length} records</div>}
+      </div>
 
       {/* Summary cards */}
       <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:12,marginBottom:16}}>
@@ -2851,6 +2919,219 @@ function UserMenu({T,user,onLogout,isMobile}){
   );
 }
 
+// ── AUDIT LOG ────────────────────────────────────────────────────────────────
+function recordAudit(setAuditLog, action, module, itemName, user, before, after){
+  // Only track non-admin actions
+  if(user.role==="admin") return;
+  const changes=[];
+  if(before&&after){
+    const keys=new Set([...Object.keys(before||{}), ...Object.keys(after||{})]);
+    const skip=new Set(["id","_delete"]);
+    keys.forEach(k=>{
+      if(skip.has(k)) return;
+      const bv=before[k]; const av=after[k];
+      if(JSON.stringify(bv)!==JSON.stringify(av)){
+        changes.push({field:k,before:bv,after:av});
+      }
+    });
+  }
+  setAuditLog(prev=>[{
+    id:uid(),
+    date:nowStr(),
+    action,// "create","update","delete"
+    module,// "fb","glass","wastage"
+    itemName,
+    userName:user.name,
+    userRole:user.role,
+    changes,
+  },...prev].slice(0,1000));
+}
+
+function AuditLogTab({T,auditLog,isMobile}){
+  const {filtered,startDate,endDate,setStartDate,setEndDate,clear}=useDateFilter(auditLog);
+  const [moduleFilter,setModuleFilter]=useState("all");
+  const [actionFilter,setActionFilter]=useState("all");
+  const [search,setSearch]=useState("");
+
+  const displayed=useMemo(()=>{
+    let r=filtered;
+    if(moduleFilter!=="all") r=r.filter(e=>e.module===moduleFilter);
+    if(actionFilter!=="all") r=r.filter(e=>e.action===actionFilter);
+    if(search){const q=search.toLowerCase();r=r.filter(e=>e.itemName?.toLowerCase().includes(q)||e.userName?.toLowerCase().includes(q));}
+    return r;
+  },[filtered,moduleFilter,actionFilter,search]);
+
+  const actionColor=(a)=>a==="create"?T.ok:a==="delete"?T.low:T.accent;
+  const actionBg=(a)=>a==="create"?T.okBg:a==="delete"?T.lowBg:T.accentDim;
+  const moduleLabel=(m)=>m==="fb"?"📦 F&B":m==="glass"?"🥤 Glass":m==="wastage"?"🗑️ Wastage":"—";
+
+  const fieldLabel=(f)=>{
+    const map={name:"Name",perUnit:"Unit Price",minQty:"Min Qty",stock:"Stock",dept:"Department",
+      supplier:"Supplier",brand:"Brand",unit:"Unit",barcode:"Barcode",location:"Location",
+      qtySize:"Qty Size",kitchenQty:"Kitchen Qty",frontQty:"Front Qty",category:"Category",
+      usage:"Usage/Drink",shortCode:"Short Code",fullCode:"Full Code",notes:"Notes",photoUrl:"Photo"};
+    return map[f]||f;
+  };
+
+  return(
+    <div>
+      <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text}}>Audit Log</div>
+          <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{displayed.length} of {auditLog.length} entries</div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div style={{background:T.card2,borderRadius:8,padding:"12px 14px",marginBottom:14,border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:10,fontWeight:700,color:T.muted,fontFamily:MO,marginBottom:8,letterSpacing:"0.08em"}}>FILTER</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+          <DateRangePicker T={T} startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} onClear={clear}/>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <Inp T={T} value={search} onChange={setSearch} placeholder="Search item or user…" s={{width:160}}/>
+          <Sel T={T} value={moduleFilter} onChange={setModuleFilter} s={{minWidth:100}}>
+            <option value="all">All Modules</option>
+            <option value="fb">F&B Stores</option>
+            <option value="glass">Glassware</option>
+            <option value="wastage">Wastage</option>
+          </Sel>
+          <Sel T={T} value={actionFilter} onChange={setActionFilter} s={{minWidth:100}}>
+            <option value="all">All Actions</option>
+            <option value="create">Created</option>
+            <option value="update">Updated</option>
+            <option value="delete">Deleted</option>
+          </Sel>
+        </div>
+      </div>
+
+      {/* Log entries */}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {displayed.map((entry,i)=>(
+          <Card T={T} key={entry.id||i} s={{padding:"14px 16px"}}>
+            <div style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:entry.changes?.length>0?10:0}}>
+              <div style={{flexShrink:0}}>
+                <span style={{fontSize:10,fontWeight:700,fontFamily:MO,padding:"3px 8px",borderRadius:4,background:actionBg(entry.action),color:actionColor(entry.action)}}>
+                  {entry.action?.toUpperCase()}
+                </span>
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:4}}>
+                  <div>
+                    <span style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:SE}}>{entry.itemName||"—"}</span>
+                    <span style={{fontSize:11,color:T.muted,fontFamily:MO,marginLeft:8}}>{moduleLabel(entry.module)}</span>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{entry.date}</div>
+                    <div style={{fontSize:11,fontWeight:600,color:T.accent,fontFamily:MO}}>{entry.userName}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Changes */}
+            {entry.changes?.length>0&&(
+              <div style={{background:T.bg,borderRadius:6,padding:"8px 10px",border:`1px solid ${T.border}`}}>
+                {entry.changes.map((c,j)=>(
+                  <div key={j} style={{display:"flex",gap:8,alignItems:"center",padding:"4px 0",borderBottom:j<entry.changes.length-1?`1px solid ${T.border}`:"none",flexWrap:"wrap"}}>
+                    <span style={{fontSize:10,fontWeight:700,color:T.muted,fontFamily:MO,minWidth:80}}>{fieldLabel(c.field)}</span>
+                    <span style={{fontSize:12,color:T.low,fontFamily:MO,textDecoration:"line-through",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{String(c.before??"")||"—"}</span>
+                    <span style={{fontSize:12,color:T.muted,fontFamily:MO}}>→</span>
+                    <span style={{fontSize:12,color:T.ok,fontFamily:MO,fontWeight:700,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{String(c.after??"")||"—"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {entry.action==="create"&&(!entry.changes||entry.changes.length===0)&&(
+              <div style={{fontSize:11,color:T.ok,fontFamily:MO}}>New item added to inventory</div>
+            )}
+            {entry.action==="delete"&&(
+              <div style={{fontSize:11,color:T.low,fontFamily:MO}}>Item permanently deleted</div>
+            )}
+          </Card>
+        ))}
+        {!displayed.length&&(
+          <div style={{textAlign:"center",padding:48,color:T.muted,fontFamily:SE}}>
+            <div style={{fontSize:32,marginBottom:8}}>📋</div>
+            <div style={{fontStyle:"italic"}}>No audit entries found</div>
+            <div style={{fontSize:12,marginTop:4}}>Changes to items will appear here</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── DATE RANGE PICKER ────────────────────────────────────────────────────────
+function DateRangePicker({T,startDate,endDate,onStartChange,onEndChange,onClear}){
+  const presets=[
+    {label:"Today",days:0},
+    {label:"7 days",days:7},
+    {label:"30 days",days:30},
+    {label:"90 days",days:90},
+  ];
+  const applyPreset=(days)=>{
+    const end=new Date();
+    const start=new Date();
+    if(days===0){
+      start.setHours(0,0,0,0);
+    } else {
+      start.setDate(start.getDate()-days);
+    }
+    onStartChange(start.toISOString().split("T")[0]);
+    onEndChange(end.toISOString().split("T")[0]);
+  };
+  return(
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+      {presets.map(p=>(
+        <button key={p.label} onClick={()=>applyPreset(p.days)}
+          style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}
+          onMouseEnter={e=>{e.currentTarget.style.background=T.accentDim;e.currentTarget.style.color=T.accent;e.currentTarget.style.borderColor=T.accent;}}
+          onMouseLeave={e=>{e.currentTarget.style.background=T.card;e.currentTarget.style.color=T.muted;e.currentTarget.style.borderColor=T.border;}}>
+          {p.label}
+        </button>
+      ))}
+      <input type="date" value={startDate} onChange={e=>onStartChange(e.target.value)}
+        style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontFamily:MO,fontSize:11,outline:"none",cursor:"pointer"}}/>
+      <span style={{color:T.muted,fontFamily:MO,fontSize:11}}>to</span>
+      <input type="date" value={endDate} onChange={e=>onEndChange(e.target.value)}
+        style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontFamily:MO,fontSize:11,outline:"none",cursor:"pointer"}}/>
+      {(startDate||endDate)&&(
+        <button onClick={onClear} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${T.low}44`,background:T.lowBg,color:T.low,cursor:"pointer",fontFamily:MO,fontSize:11,fontWeight:700}}>✕ Clear</button>
+      )}
+      {startDate&&endDate&&(
+        <span style={{fontSize:10,color:T.muted,fontFamily:MO}}>{startDate} → {endDate}</span>
+      )}
+    </div>
+  );
+}
+
+function useDateFilter(data,dateKey="date"){
+  const [startDate,setStartDate]=useState("");
+  const [endDate,setEndDate]=useState("");
+  const filtered=useMemo(()=>{
+    if(!startDate&&!endDate) return data;
+    return data.filter(item=>{
+      const itemDate=item[dateKey]?.split(",")[0]?.trim();// handle "DD/MM/YYYY, HH:MM" format
+      if(!itemDate) return true;
+      // Parse DD/MM/YYYY
+      const parts=itemDate.split("/");
+      if(parts.length!==3) return true;
+      const d=new Date(parts[2],parts[1]-1,parts[0]);
+      if(startDate){
+        const s=new Date(startDate);s.setHours(0,0,0,0);
+        if(d<s) return false;
+      }
+      if(endDate){
+        const e=new Date(endDate);e.setHours(23,59,59,999);
+        if(d>e) return false;
+      }
+      return true;
+    });
+  },[data,startDate,endDate,dateKey]);
+  return{filtered,startDate,endDate,setStartDate,setEndDate,clear:()=>{setStartDate("");setEndDate("");}};
+}
+
 // ── MODULE SELECTOR ──────────────────────────────────────────────────────────
 function ModuleSelector({T,isDark,onToggle,currentUser,onSelect,onLogout}){
   const isMobile=useIsMobile();
@@ -2937,6 +3218,7 @@ export default function App(){
   const [users,setUsers]=useState(DEFAULT_USERS);
   const [devices,setDevices]=useState([]);
   const [loginHistory,setLoginHistory]=useState([]);
+  const [auditLog,setAuditLog]=useState([]);
   const loginSessionRef=useRef(null);
   const lastActivityRef=useRef(Date.now());
   const SESSION_TIMEOUT_MS=2*60*60*1000;// 2 hours
@@ -2965,7 +3247,7 @@ export default function App(){
   // ── Boot: load from Firebase ──────────────────────────────────────────────
   useEffect(()=>{
     async function boot(){
-      const [si,sm,sc,su,sd,as,th,lh]=await Promise.all([
+      const [si,sm,sc,su,sd,as,th,lh,al]=await Promise.all([
         fbLoad("items", DEFAULT_ITEMS),
         fbLoad("movements", []),
         fbLoad("counts", []),
@@ -2974,8 +3256,9 @@ export default function App(){
         fbLoad("alertSettings", {email1:"",email2:"",enabled:true,threshold:"atMin"}),
         fbLoad("theme", false),
         fbLoad("loginHistory", []),
+        fbLoad("auditLog", []),
       ]);
-      setItems(si); setMovements(sm); setCountHistory(sc); setUsers(su); setDevices(sd); setAlertSettings(as); setIsDark(th); setLoginHistory(lh); setIsDark(th);
+      setItems(si); setMovements(sm); setCountHistory(sc); setUsers(su); setDevices(sd); setAlertSettings(as); setIsDark(th); setLoginHistory(lh); setAuditLog(al); setIsDark(th);
       setReady(true);
     }
     boot();
@@ -2988,6 +3271,7 @@ export default function App(){
   useEffect(()=>{if(ready) fbSave("users", users);},[users,ready]);
   useEffect(()=>{if(ready) fbSave("devices", devices);},[devices,ready]);
   useEffect(()=>{if(ready) fbSave("loginHistory", loginHistory);},[loginHistory,ready]);
+  useEffect(()=>{if(ready) fbSave("auditLog", auditLog);},[auditLog,ready]);
   useEffect(()=>{if(ready) fbSave("alertSettings", alertSettings);},[alertSettings,ready]);
   useEffect(()=>{if(ready) fbSave("theme", isDark);},[isDark,ready]);
 
@@ -3108,7 +3392,7 @@ export default function App(){
   if(!ready) return(<div style={{minHeight:"100vh",background:LIGHT.bg,display:"flex",alignItems:"center",justifyContent:"center",color:LIGHT.muted,fontFamily:SE}}><div style={{textAlign:"center"}}><HazelLogo T={LIGHT} size={50}/><div style={{marginTop:12,fontSize:16,letterSpacing:"0.12em",color:LIGHT.muted}}>Loading…</div></div></div>);
   if(!currentUser) return(<><LoginScreen T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} users={users} setUsers={setUsers} onLogin={handleLogin}/><CreatorStamp T={T}/></>);
   if(!activeModule) return(<ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m)=>{window.history.pushState({module:m},"");setActiveModule(m);}} onLogout={handleLogout}/>);
-  if(activeModule==="glassware") return(<GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}}/>);
+  if(activeModule==="glassware") return(<GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}} setAuditLog={setAuditLog} auditLog={auditLog}/>);
   if(activeModule==="wastage") return(<WastageModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}} fbItems={items} glassItems={[]} setFbItems={setItems} setGlassItems={()=>{}}/>);
   if(activeModule==="grn") return(
     <div style={{minHeight:"100vh",background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:SE,padding:24}}>
@@ -3167,6 +3451,7 @@ export default function App(){
         {safeTab==="reports"&&<ReportsTab T={T} movements={movements} countHistory={countHistory}/>}
         {safeTab==="users"&&<UsersTab T={T} users={users} setUsers={setUsers}/>}
         {safeTab==="devices"&&<DevicesTab T={T} devices={devices} setDevices={setDevices} loginHistory={loginHistory}/>}
+        {safeTab==="audit"&&<AuditLogTab T={T} auditLog={auditLog} isMobile={isMobile}/>}
       </div>
       {isMobile&&(<div style={{position:"fixed",bottom:0,left:0,right:0,background:T.navBg,borderTop:`1px solid ${T.navBorder}`,display:"flex",zIndex:100,overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch",scrollSnapType:"x mandatory"}}><style>{`.mobile-tab-scroll::-webkit-scrollbar{display:none}`}</style>{allowedTabs.map(t=>{const c=tabColor(t.key,T);const active=safeTab===t.key;return(<button key={t.key} onClick={()=>setTab(t.key)} style={{flexShrink:0,minWidth:60,padding:"9px 6px 7px",border:"none",background:active?c+"15":"transparent",color:active?c:T.muted,cursor:"pointer",fontFamily:MO,display:"flex",flexDirection:"column",alignItems:"center",gap:2,borderTop:active?`2px solid ${c}`:`2px solid transparent`,scrollSnapAlign:"start",transition:"all 0.15s"}}><span style={{fontSize:16,lineHeight:1}}>{t.icon}</span><span style={{fontSize:8,fontWeight:700,whiteSpace:"nowrap"}}>{t.label}</span></button>);})}</div>)}
       {showAlertSettings&&<AlertSettingsModal T={T} settings={alertSettings} onClose={()=>setShowAlertSettings(false)} onSave={s=>{setAlertSettings(s);setShowAlertSettings(false);}}/> }
