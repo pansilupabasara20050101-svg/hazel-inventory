@@ -1,4 +1,3 @@
-
 import { useState, useMemo, useEffect, useRef } from "react";
 import { db } from "./firebase";
 import { doc, setDoc, getDoc, onSnapshot, collection } from "firebase/firestore";
@@ -1999,7 +1998,7 @@ function GlassTransferModal({T,items,onClose,onSave}){
   );
 }
 
-function GlasswareModule({T,isDark,onToggle,currentUser,onBack,setAuditLog=()=>{},auditLog=[]}){
+function GlasswareModule({T,isDark,onToggle,currentUser,onBack,onLogout,setAuditLog=()=>{},auditLog=[]}){
   const isMobile=useIsMobile();
   const [items,setItems]=useState([]);
   const [movements,setMovements]=useState([]);
@@ -2117,7 +2116,7 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack,setAuditLog=()=>{
             {lowItems.length>0&&<div style={{fontSize:10,color:T.low,fontFamily:MO,fontWeight:700}}>⚠ {lowItems.length} low stock</div>}
           </div>
           <ThemeToggle T={T} isDark={isDark} onToggle={onToggle}/>
-          <UserMenu T={T} user={currentUser} onLogout={onBack} isMobile={isMobile}/>
+          <UserMenu T={T} user={currentUser} onLogout={onLogout||onBack} isMobile={isMobile}/>
         </div>
         {/* Tabs */}
         <div style={{display:"flex",overflowX:"auto",scrollbarWidth:"none",borderTop:`1px solid ${T.navBorder}`}}>
@@ -2406,7 +2405,7 @@ function GlassReportsTab({T,items,movements,isMobile}){
 }
 
 // ── WASTAGE MODULE ───────────────────────────────────────────────────────────
-function WastageModule({T,isDark,onToggle,currentUser,onBack,fbItems,glassItems,setFbItems,setGlassItems}){
+function WastageModule({T,isDark,onToggle,currentUser,onBack,onLogout,fbItems,glassItems,setFbItems,setGlassItems}){
   const isMobile=useIsMobile();
   const [wastageLog,setWastageLog]=useState([]);
   const [ready,setReady]=useState(false);
@@ -2463,7 +2462,7 @@ function WastageModule({T,isDark,onToggle,currentUser,onBack,fbItems,glassItems,
             <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{wastageLog.length} records</div>
           </div>
           <ThemeToggle T={T} isDark={isDark} onToggle={onToggle}/>
-          <UserMenu T={T} user={currentUser} onLogout={onBack} isMobile={isMobile}/>
+          <UserMenu T={T} user={currentUser} onLogout={onLogout||onBack} isMobile={isMobile}/>
         </div>
         <div style={{display:"flex",overflowX:"auto",scrollbarWidth:"none",borderTop:`1px solid ${T.navBorder}`}}>
           {TABS.map(t=>{
@@ -2924,12 +2923,11 @@ function UserMenu({T,user,onLogout,isMobile}){
 const SUPPLIERS = ["Sivasakthy","Udula Distributors","Lanka Milk Foods","CBL Food Solutions","Damn Fine","Edinborough","Kist","Ambewela","Nestle","Bulk","Other"];
 const PAID_BY = ["Petty Cash","Float","Not Paid from Cafe"];
 
-function GRNModule({T,isDark,onToggle,currentUser,onBack,fbItems,setFbItems}){
+function GRNModule({T,isDark,onToggle,currentUser,onBack,onLogout,fbItems,setFbItems,glassItems,setGlassItems}){
   const isMobile=useIsMobile();
   const [grnLog,setGrnLog]=useState([]);
   const [ready,setReady]=useState(false);
   const [tab,setTab]=useState("new");
-  const [showForm,setShowForm]=useState(true);
   const [viewGRN,setViewGRN]=useState(null);
 
   const canViewHistory=["admin","supervisor","counter"].includes(currentUser.role);
@@ -2938,7 +2936,13 @@ function GRNModule({T,isDark,onToggle,currentUser,onBack,fbItems,setFbItems}){
   useEffect(()=>{
     fbLoad("grnLog",[]).then(g=>{setGrnLog(g);setReady(true);});
   },[]);
-  useEffect(()=>{if(ready) fbSave("grnLog",grnLog);},[grnLog,ready]);
+  useEffect(()=>{
+    if(ready){
+      fbSave("grnLog",grnLog);
+      // Sync to Google Sheets
+      fetch("/api/sync-grn",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({grnLog})}).catch(()=>{});
+    }
+  },[grnLog,ready]);
 
   const TABS=[
     {key:"new",label:"New GRN",icon:"📋"},
@@ -2946,18 +2950,25 @@ function GRNModule({T,isDark,onToggle,currentUser,onBack,fbItems,setFbItems}){
     ...(canViewReports?[{key:"reports",label:"Reports",icon:"📊"}]:[]),
   ];
 
-  const handleSave=(grn)=>{
-    // Update prices and stock in F&B inventory if item matched
-    if(grn.items?.length>0){
-      setFbItems(prev=>prev.map(item=>{
-        const matched=grn.items.find(g=>g.itemId===item.id);
-        if(!matched) return item;
-        const updates={...item, stock:item.stock+Number(matched.qty||0)};
-        if(matched.priceChanged&&matched.newPrice) updates.perUnit=matched.newPrice;
-        return updates;
-      }));
-    }
-    setGrnLog(prev=>[grn,...prev].slice(0,500));
+  const handleSave=(grns)=>{
+    // grns is an array of GRN records (one per item)
+    // Update stock in respective inventories and record movements
+    grns.forEach(grn=>{
+      if(grn.inventoryType==="fb"&&grn.itemId){
+        setFbItems(prev=>prev.map(i=>{
+          if(i.id!==grn.itemId) return i;
+          const updated={...i,stock:i.stock+Number(grn.qty||0)};
+          if(grn.priceChanged&&grn.newPrice) updated.perUnit=grn.newPrice;
+          return updated;
+        }));
+      } else if(grn.inventoryType==="glass"&&grn.itemId){
+        setGlassItems(prev=>prev.map(i=>{
+          if(i.id!==grn.itemId) return i;
+          return{...i,kitchenQty:i.kitchenQty+Number(grn.qty||0)};
+        }));
+      }
+    });
+    setGrnLog(prev=>[...grns,...prev].slice(0,1000));
   };
 
   if(!ready) return(<div style={{minHeight:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",color:T.muted,fontFamily:SE}}>Loading…</div>);
@@ -2976,248 +2987,250 @@ function GRNModule({T,isDark,onToggle,currentUser,onBack,fbItems,setFbItems}){
             <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{grnLog.length} records</div>
           </div>
           <ThemeToggle T={T} isDark={isDark} onToggle={onToggle}/>
-          <UserMenu T={T} user={currentUser} onLogout={onBack} isMobile={isMobile}/>
+          <UserMenu T={T} user={currentUser} onLogout={onLogout||onBack} isMobile={isMobile}/>
         </div>
         <div style={{display:"flex",overflowX:"auto",scrollbarWidth:"none",borderTop:`1px solid ${T.navBorder}`}}>
-          {TABS.map(t=>{
-            const active=tab===t.key;
-            return(<button key={t.key} onClick={()=>setTab(t.key)} style={{flexShrink:0,padding:"8px 14px",border:"none",borderBottom:active?`2px solid ${T.accent}`:"2px solid transparent",background:active?T.accentDim:"transparent",color:active?T.accent:T.muted,fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:MO,whiteSpace:"nowrap"}}>{t.icon} {t.label}</button>);
-          })}
+          {TABS.map(t=>{const active=tab===t.key;return(<button key={t.key} onClick={()=>setTab(t.key)} style={{flexShrink:0,padding:"8px 14px",border:"none",borderBottom:active?`2px solid ${T.accent}`:"2px solid transparent",background:active?T.accentDim:"transparent",color:active?T.accent:T.muted,fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:MO,whiteSpace:"nowrap"}}>{t.icon} {t.label}</button>);})}
         </div>
       </div>
 
       <div style={{padding:isMobile?"12px":"20px",maxWidth:900,margin:"0 auto"}}>
-        {tab==="new"&&<GRNForm T={T} currentUser={currentUser} fbItems={fbItems} onSave={handleSave} isMobile={isMobile}/>}
+        {tab==="new"&&<GRNForm T={T} currentUser={currentUser} fbItems={fbItems} glassItems={glassItems||[]} onSave={handleSave} isMobile={isMobile}/>}
         {tab==="history"&&canViewHistory&&<GRNHistory T={T} grnLog={grnLog} isMobile={isMobile} onView={setViewGRN}/>}
         {tab==="reports"&&canViewReports&&<GRNReports T={T} grnLog={grnLog} isMobile={isMobile}/>}
       </div>
-
       {viewGRN&&<GRNViewModal T={T} grn={viewGRN} onClose={()=>setViewGRN(null)}/>}
     </div>
   );
 }
 
-function GRNForm({T,currentUser,fbItems,onSave,isMobile}){
-  const [step,setStep]=useState(1);// 1=header, 2=items, 3=photos, 4=review
+function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
+  const [step,setStep]=useState(1);
   const [scanning,setScanning]=useState(false);
   const [aiProcessing,setAiProcessing]=useState(false);
+  const videoRef=useRef(null);
+  const streamRef=useRef(null);
 
-  // Header fields
+  // Header - shared across all GRNs
   const [supplier,setSupplier]=useState("");
   const [customSupplier,setCustomSupplier]=useState("");
   const [invoiceNo,setInvoiceNo]=useState("");
   const [invoiceAmount,setInvoiceAmount]=useState("");
   const [paidBy,setPaidBy]=useState("Petty Cash");
-  const [notes,setNotes]=useState("");
+  const [billPhoto,setBillPhoto]=useState(null);
 
-  // Items
-  const [items,setItems]=useState([]);
-  const [itemSearch,setItemSearch]=useState("");
-  const [itemSearchResults,setItemSearchResults]=useState([]);
+  // Items - one card per item, each becomes separate GRN
+  const [items,setItems]=useState([{id:uid(),name:"",qty:"",price:"",itemId:null,inventoryType:null,currentPrice:0,priceChanged:false,newPrice:null,itemPhoto:null,search:"",searchResults:[],capturing:false}]);
 
-  // Photos
-  const [billPhotos,setBillPhotos]=useState([]);
-  const [itemPhotos,setItemPhotos]=useState([]);
-  const videoRef=useRef(null);
-  const streamRef=useRef(null);
-  const [capturing,setCapturing]=useState(null);// "bill" or "items"
+  const [submitted,setSubmitted]=useState(false);
+  const [submitSummary,setSubmitSummary]=useState(null);
 
-  const totalCalc=items.reduce((s,i)=>s+(Number(i.qty||0)*Number(i.price||0)),0);
+  const allFbItems=fbItems||[];
+  const allGlassItems=glassItems||[];
 
-  // Item search
-  useEffect(()=>{
-    if(!itemSearch){setItemSearchResults([]);return;}
-    const q=itemSearch.toLowerCase();
-    setItemSearchResults(fbItems.filter(i=>i.name.toLowerCase().includes(q)||i.code?.toLowerCase().includes(q)||(i.supplier&&i.supplier.toLowerCase().includes(q))).slice(0,6));
-  },[itemSearch,fbItems]);
-
-  const addItem=(fbItem=null)=>{
-    const newItem={
-      id:uid(),
-      itemId:fbItem?.id||null,
-      name:fbItem?.name||itemSearch||"",
-      code:fbItem?.code||"",
-      currentPrice:fbItem?.perUnit||0,
-      price:fbItem?.perUnit||"",
-      qty:"",
-      unit:fbItem?.unit||"",
-      inInventory:!!fbItem,
-      priceChanged:false,
-      newPrice:null,
-    };
-    setItems(prev=>[...prev,newItem]);
-    setItemSearch("");
-    setItemSearchResults([]);
+  const searchInventory=(q)=>{
+    if(!q) return[];
+    const query=q.toLowerCase();
+    const fb=allFbItems.filter(i=>i.name.toLowerCase().includes(query)||i.code?.toLowerCase().includes(query)).map(i=>({...i,_type:"fb"}));
+    const glass=allGlassItems.filter(i=>i.name.toLowerCase().includes(query)||i.shortCode?.toLowerCase().includes(query)).map(i=>({...i,_type:"glass"}));
+    return[...fb,...glass].slice(0,8);
   };
 
   const updateItem=(id,field,value)=>{
-    setItems(prev=>prev.map(i=>{
-      if(i.id!==id) return i;
-      const updated={...i,[field]:value};
-      // Detect price change
-      if(field==="price"&&i.inInventory){
-        updated.priceChanged=Number(value)!==Number(i.currentPrice)&&Number(value)>0;
+    setItems(prev=>prev.map(item=>{
+      if(item.id!==id) return item;
+      const updated={...item,[field]:value};
+      if(field==="search"){
+        updated.searchResults=searchInventory(value);
+        if(!value){updated.itemId=null;updated.inventoryType=null;updated.currentPrice=0;updated.priceChanged=false;}
+      }
+      if(field==="price"&&item.itemId){
+        updated.priceChanged=Number(value)!==Number(item.currentPrice)&&Number(value)>0;
         updated.newPrice=Number(value);
       }
       return updated;
     }));
   };
 
+  const selectInventoryItem=(id,inv)=>{
+    setItems(prev=>prev.map(item=>{
+      if(item.id!==id) return item;
+      return{...item,name:inv.name,itemId:inv.id,inventoryType:inv._type,currentPrice:Number(inv.perUnit||0),price:String(inv.perUnit||""),search:inv.name,searchResults:[],priceChanged:false,newPrice:null};
+    }));
+  };
+
+  const addItem=()=>setItems(prev=>[...prev,{id:uid(),name:"",qty:"",price:"",itemId:null,inventoryType:null,currentPrice:0,priceChanged:false,newPrice:null,itemPhoto:null,search:"",searchResults:[],capturing:false}]);
   const removeItem=(id)=>setItems(prev=>prev.filter(i=>i.id!==id));
 
-  const startCamera=async(type)=>{
+  // Camera for bill
+  const startBillCamera=async()=>{
     try{
       const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
       streamRef.current=stream;
       if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play();}
-      setCapturing(type);
+      setScanning("camera");
     }catch(e){alert("Camera access denied.");}
   };
 
-  const capturePhoto=(type)=>{
+  const captureBill=async()=>{
     if(!videoRef.current) return;
     const canvas=document.createElement("canvas");
-    canvas.width=videoRef.current.videoWidth;
-    canvas.height=videoRef.current.videoHeight;
+    canvas.width=videoRef.current.videoWidth;canvas.height=videoRef.current.videoHeight;
     canvas.getContext("2d").drawImage(videoRef.current,0,0);
     const dataUrl=canvas.toDataURL("image/jpeg",0.8);
-    if(type==="bill") setBillPhotos(prev=>[...prev,dataUrl].slice(0,5));
-    else setItemPhotos(prev=>[...prev,dataUrl].slice(0,5));
     streamRef.current?.getTracks().forEach(t=>t.stop());
-    setCapturing(null);
+    setScanning(false);setBillPhoto(dataUrl);
+    await scanBillAI(dataUrl);
   };
 
-  const uploadPhoto=(e,type)=>{
-    Array.from(e.target.files).forEach(file=>{
-      const reader=new FileReader();
-      reader.onload=ev=>{
-        if(type==="bill") setBillPhotos(prev=>[...prev,ev.target.result].slice(0,5));
-        else setItemPhotos(prev=>[...prev,ev.target.result].slice(0,5));
-      };
-      reader.readAsDataURL(file);
-    });
-  };
-
-  // AI scan bill
-  const scanBillWithAI=async(photoData)=>{
+  const scanBillAI=async(photoData)=>{
     setAiProcessing(true);
     try{
-      const resp=await fetch("/api/scan-grn",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({image:photoData.split(",")[1]})
-      });
+      const resp=await fetch("/api/scan-grn",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:photoData.split(",")[1]})});
       const data=await resp.json();
-      if(data.supplier) setSupplier(data.supplier);
+      if(data.supplier){const found=SUPPLIERS.find(s=>s.toLowerCase()===data.supplier?.toLowerCase());setSupplier(found||"Other");if(!found) setCustomSupplier(data.supplier);}
       if(data.invoiceNo) setInvoiceNo(data.invoiceNo);
-      if(data.invoiceAmount) setInvoiceAmount(data.invoiceAmount);
+      if(data.invoiceAmount) setInvoiceAmount(String(data.invoiceAmount));
       if(data.items?.length>0){
-        const mapped=data.items.map(ai=>{
-          const matched=fbItems.find(f=>f.name.toLowerCase().includes(ai.name?.toLowerCase())||ai.name?.toLowerCase().includes(f.name?.toLowerCase()));
-          return{id:uid(),itemId:matched?.id||null,name:ai.name||"",code:matched?.code||"",currentPrice:matched?.perUnit||0,price:ai.price||matched?.perUnit||"",qty:ai.qty||"",unit:matched?.unit||ai.unit||"",inInventory:!!matched,priceChanged:ai.price&&matched&&Number(ai.price)!==Number(matched.perUnit),newPrice:ai.price||null};
-        });
-        setItems(mapped);
+        setItems(data.items.map(ai=>{
+          const fbMatch=allFbItems.find(f=>f.name.toLowerCase().includes(ai.name?.toLowerCase())||ai.name?.toLowerCase().includes(f.name?.toLowerCase()));
+          const glMatch=!fbMatch&&allGlassItems.find(g=>g.name.toLowerCase().includes(ai.name?.toLowerCase()));
+          const matched=fbMatch||glMatch;
+          return{id:uid(),name:ai.name||"",qty:String(ai.qty||""),price:String(ai.price||matched?.perUnit||""),itemId:matched?.id||null,inventoryType:fbMatch?"fb":glMatch?"glass":null,currentPrice:Number(matched?.perUnit||0),priceChanged:ai.price&&matched&&Number(ai.price)!==Number(matched?.perUnit),newPrice:ai.price?Number(ai.price):null,itemPhoto:null,search:ai.name||"",searchResults:[]};
+        }));
       }
     }catch(e){console.error(e);}
     setAiProcessing(false);
     setStep(2);
   };
 
-  const handleBillCapture=async()=>{
+  // Item photo capture
+  const startItemCamera=async(id)=>{
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+      streamRef.current=stream;
+      if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play();}
+      setItems(prev=>prev.map(i=>i.id===id?{...i,capturing:true}:i));
+    }catch(e){alert("Camera access denied.");}
+  };
+
+  const captureItemPhoto=(id)=>{
     if(!videoRef.current) return;
     const canvas=document.createElement("canvas");
-    canvas.width=videoRef.current.videoWidth;
-    canvas.height=videoRef.current.videoHeight;
+    canvas.width=videoRef.current.videoWidth;canvas.height=videoRef.current.videoHeight;
     canvas.getContext("2d").drawImage(videoRef.current,0,0);
-    const dataUrl=canvas.toDataURL("image/jpeg",0.8);
-    setBillPhotos([dataUrl]);
+    const dataUrl=canvas.toDataURL("image/jpeg",0.7);
     streamRef.current?.getTracks().forEach(t=>t.stop());
-    setCapturing(null);
-    setScanning(false);
-    await scanBillWithAI(dataUrl);
+    setItems(prev=>prev.map(i=>i.id===id?{...i,itemPhoto:dataUrl,capturing:false}:i));
   };
 
   const submit=()=>{
-    const grn={
-      id:uid(),
-      date:nowStr(),
-      staffName:currentUser.name,
-      userRole:currentUser.role,
-      supplier:supplier==="Other"?customSupplier:supplier,
-      invoiceNo,
-      invoiceAmount:Number(invoiceAmount)||totalCalc,
-      paidBy,
-      notes,
-      items,
-      billPhotos,
-      itemPhotos,
-      totalCalc,
-    };
-    onSave(grn);
-    // Reset
-    setStep(1);setSupplier("");setInvoiceNo("");setInvoiceAmount("");setPaidBy("Petty Cash");setNotes("");setItems([]);setBillPhotos([]);setItemPhotos([]);
-    alert("GRN submitted successfully!");
+    const baseHeader={date:nowStr(),staffName:currentUser.name,userRole:currentUser.role,supplier:supplier==="Other"?customSupplier:supplier,invoiceNo,invoiceAmount:Number(invoiceAmount)||0,paidBy,billPhoto};
+    const grns=items.map(item=>({...baseHeader,id:uid(),itemName:item.name,qty:Number(item.qty||0),price:Number(item.price||0),total:Number(item.qty||0)*Number(item.price||0),itemId:item.itemId,inventoryType:item.inventoryType,currentPrice:item.currentPrice,priceChanged:item.priceChanged,newPrice:item.newPrice,itemPhoto:item.itemPhoto}));
+    
+    // Build summary
+    const summary=grns.map(g=>({name:g.itemName,inventoryType:g.inventoryType,qty:g.qty,total:g.total,priceChanged:g.priceChanged,newPrice:g.newPrice,currentPrice:g.currentPrice}));
+    
+    onSave(grns);
+    setSubmitSummary(summary);
+    setSubmitted(true);
   };
 
-  // STEP INDICATOR
-  const steps=["Header","Items","Photos","Review"];
+  if(submitted&&submitSummary){
+    const fbAdded=submitSummary.filter(s=>s.inventoryType==="fb");
+    const glAdded=submitSummary.filter(s=>s.inventoryType==="glass");
+    const notAdded=submitSummary.filter(s=>!s.inventoryType);
+    return(
+      <Card T={T} s={{padding:24}}>
+        <div style={{fontSize:18,fontWeight:600,fontFamily:SE,color:T.ok,marginBottom:6}}>✅ GRN Submitted!</div>
+        <div style={{fontSize:12,color:T.muted,fontFamily:MO,marginBottom:20}}>{submitSummary.length} item{submitSummary.length!==1?"s":""} recorded · {new Date().toLocaleString()}</div>
+        
+        {fbAdded.length>0&&(<div style={{marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.ok,fontFamily:MO,marginBottom:8}}>✅ ADDED TO F&B STORES</div>
+          {fbAdded.map((s,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 12px",background:T.okBg,borderRadius:7,marginBottom:6}}>
+              <div><div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{s.name}</div><div style={{fontSize:10,color:T.muted,fontFamily:MO}}>+{s.qty} units{s.priceChanged?` · Price updated: Rs ${s.currentPrice}→${s.newPrice}`:""}</div></div>
+              <div style={{fontSize:14,fontWeight:700,color:T.ok,fontFamily:MO}}>Rs {s.total.toLocaleString()}</div>
+            </div>
+          ))}
+        </div>)}
+
+        {glAdded.length>0&&(<div style={{marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.accent,fontFamily:MO,marginBottom:8}}>✅ ADDED TO GLASSWARE</div>
+          {glAdded.map((s,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 12px",background:T.accentDim,borderRadius:7,marginBottom:6}}>
+              <div><div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{s.name}</div><div style={{fontSize:10,color:T.muted,fontFamily:MO}}>+{s.qty} units</div></div>
+              <div style={{fontSize:14,fontWeight:700,color:T.accent,fontFamily:MO}}>Rs {s.total.toLocaleString()}</div>
+            </div>
+          ))}
+        </div>)}
+
+        {notAdded.length>0&&(<div style={{marginBottom:20}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.warn,fontFamily:MO,marginBottom:8}}>⚠ NOT IN ANY INVENTORY — RECORDED ONLY</div>
+          {notAdded.map((s,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 12px",background:T.warnBg,borderRadius:7,marginBottom:6}}>
+              <div><div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{s.name}</div><div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{s.qty} units · no stock update</div></div>
+              <div style={{fontSize:14,fontWeight:700,color:T.warn,fontFamily:MO}}>Rs {s.total.toLocaleString()}</div>
+            </div>
+          ))}
+        </div>)}
+
+        <Btn T={T} v="primary" onClick={()=>{setSubmitted(false);setSubmitSummary(null);setStep(1);setSupplier("");setCustomSupplier("");setInvoiceNo("");setInvoiceAmount("");setPaidBy("Petty Cash");setBillPhoto(null);setItems([{id:uid(),name:"",qty:"",price:"",itemId:null,inventoryType:null,currentPrice:0,priceChanged:false,newPrice:null,itemPhoto:null,search:"",searchResults:[],capturing:false}]);}} s={{width:"100%",padding:"13px",fontSize:14}}>
+          + New GRN
+        </Btn>
+      </Card>
+    );
+  }
 
   return(
     <div>
       {/* Step indicator */}
       <div style={{display:"flex",gap:0,marginBottom:20,background:T.card,borderRadius:10,overflow:"hidden",border:`1px solid ${T.border}`}}>
-        {steps.map((s,i)=>(
-          <button key={i} onClick={()=>setStep(i+1)}
-            style={{flex:1,padding:"10px 4px",border:"none",background:step===i+1?T.accent:step>i+1?T.accentDim:"transparent",color:step===i+1?"#fff":step>i+1?T.accent:T.muted,cursor:"pointer",fontFamily:MO,fontSize:10,fontWeight:700,textAlign:"center",borderRight:i<3?`1px solid ${T.border}`:"none",transition:"all 0.15s"}}>
+        {["1. Scan Bill","2. Items & Photos","3. Review"].map((s,i)=>(
+          <button key={i} onClick={()=>i<step-1&&setStep(i+1)}
+            style={{flex:1,padding:"11px 4px",border:"none",background:step===i+1?T.accent:step>i+1?T.accentDim:"transparent",color:step===i+1?"#fff":step>i+1?T.accent:T.muted,cursor:i<step-1?"pointer":"default",fontFamily:MO,fontSize:10,fontWeight:700,textAlign:"center",borderRight:i<2?`1px solid ${T.border}`:"none"}}>
             {step>i+1?"✓ ":""}{s}
           </button>
         ))}
       </div>
 
-      {/* STEP 1 — HEADER */}
+      {/* STEP 1 — SCAN BILL */}
       {step===1&&(
         <Card T={T} s={{padding:20}}>
-          <div style={{fontSize:16,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:16}}>📋 Invoice Details</div>
+          <div style={{fontSize:16,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:16}}>📋 Scan or Enter Bill Details</div>
 
-          {/* AI Scan button */}
-          {!scanning&&billPhotos.length===0&&(
-            <button onClick={()=>setScanning(true)}
-              style={{width:"100%",padding:"14px",borderRadius:10,border:`2px dashed ${T.accent}`,background:T.accentDim,color:T.accent,cursor:"pointer",fontFamily:SE,fontSize:14,fontWeight:600,marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              📸 Scan Bill with AI — Auto Fill
-            </button>
+          {!billPhoto&&(
+            <>
+              <button onClick={()=>startBillCamera()}
+                style={{width:"100%",padding:"16px",borderRadius:10,border:`2px dashed ${T.accent}`,background:T.accentDim,color:T.accent,cursor:"pointer",fontFamily:SE,fontSize:15,fontWeight:600,marginBottom:10,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                📸 Scan Bill with Camera
+              </button>
+              <label style={{width:"100%",padding:"13px",borderRadius:10,border:`1px dashed ${T.border}`,background:T.card,color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:13,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:16,boxSizing:"border-box"}}>
+                🖼 Upload from Gallery<input type="file" accept="image/*" onChange={async e=>{const file=e.target.files[0];if(!file) return;const reader=new FileReader();reader.onload=async ev=>{setBillPhoto(ev.target.result);await scanBillAI(ev.target.result);};reader.readAsDataURL(file);}} style={{display:"none"}}/>
+              </label>
+            </>
           )}
 
-          {scanning&&(
-            <div style={{marginBottom:16}}>
-              {capturing==="bill"?(
-                <div style={{position:"relative",borderRadius:10,overflow:"hidden",marginBottom:8}}>
-                  <video ref={videoRef} style={{width:"100%",maxHeight:220,objectFit:"cover",display:"block"}} muted playsInline/>
-                  {aiProcessing?(
-                    <div style={{position:"absolute",inset:0,background:"#000a",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontFamily:MO,fontSize:13,fontWeight:700}}>🤖 Reading bill…</div>
-                  ):(
-                    <button onClick={handleBillCapture} style={{position:"absolute",bottom:10,left:"50%",transform:"translateX(-50%)",background:T.accent,border:"none",borderRadius:20,padding:"10px 24px",cursor:"pointer",fontFamily:MO,fontSize:13,fontWeight:700,color:"#fff"}}>📸 Capture & Scan</button>
-                  )}
-                </div>
+          {scanning==="camera"&&(
+            <div style={{position:"relative",borderRadius:10,overflow:"hidden",marginBottom:16}}>
+              <video ref={videoRef} style={{width:"100%",maxHeight:240,objectFit:"cover",display:"block"}} muted playsInline/>
+              {aiProcessing?(
+                <div style={{position:"absolute",inset:0,background:"#000b",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontFamily:MO,fontSize:14,fontWeight:700}}>🤖 Reading bill…</div>
               ):(
-                <div style={{display:"flex",gap:8,marginBottom:8}}>
-                  <button onClick={()=>startCamera("bill")} style={{flex:1,padding:"12px",border:`1px solid ${T.accent}`,borderRadius:8,background:T.accentDim,color:T.accent,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700}}>📷 Open Camera</button>
-                  <label style={{flex:1,padding:"12px",border:`1px solid ${T.border}`,borderRadius:8,background:T.card,color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                    🖼 Gallery<input type="file" accept="image/*" onChange={async e=>{
-                      const file=e.target.files[0];if(!file) return;
-                      const reader=new FileReader();
-                      reader.onload=async ev=>{setBillPhotos([ev.target.result]);setScanning(false);await scanBillWithAI(ev.target.result);};
-                      reader.readAsDataURL(file);
-                    }} style={{display:"none"}}/>
-                  </label>
-                  <button onClick={()=>setScanning(false)} style={{padding:"12px",border:`1px solid ${T.border}`,borderRadius:8,background:T.card,color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:11}}>✕</button>
-                </div>
+                <>
+                  <button onClick={captureBill} style={{position:"absolute",bottom:10,left:"50%",transform:"translateX(-50%)",background:T.accent,border:"none",borderRadius:20,padding:"10px 28px",cursor:"pointer",fontFamily:MO,fontSize:14,fontWeight:700,color:"#fff"}}>📸 Capture</button>
+                  <button onClick={()=>{streamRef.current?.getTracks().forEach(t=>t.stop());setScanning(false);}} style={{position:"absolute",top:8,right:8,background:"#000a",border:"none",borderRadius:6,padding:"6px 10px",cursor:"pointer",color:"#fff",fontSize:12}}>✕</button>
+                </>
               )}
             </div>
           )}
 
-          {aiProcessing&&(
-            <div style={{background:T.accentDim,border:`1px solid ${T.accent}44`,borderRadius:8,padding:"12px",marginBottom:16,textAlign:"center",fontFamily:MO,fontSize:13,color:T.accent}}>
-              🤖 AI is reading your bill… please wait
+          {aiProcessing&&<div style={{background:T.accentDim,border:`1px solid ${T.accent}44`,borderRadius:8,padding:"12px",marginBottom:16,textAlign:"center",fontFamily:MO,fontSize:13,color:T.accent}}>🤖 AI is reading your bill… please wait</div>}
+
+          {billPhoto&&(
+            <div style={{position:"relative",marginBottom:16}}>
+              <img src={billPhoto} alt="bill" style={{width:"100%",maxHeight:180,objectFit:"cover",borderRadius:8,border:`1px solid ${T.border}`}}/>
+              <button onClick={()=>{setBillPhoto(null);setScanning(false);}} style={{position:"absolute",top:6,right:6,background:"#000a",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",color:"#fff",fontSize:11}}>✕ Rescan</button>
             </div>
           )}
 
@@ -3233,234 +3246,162 @@ function GRNForm({T,currentUser,fbItems,onSave,isMobile}){
             <div><Label T={T}>Invoice No. *</Label><Inp T={T} value={invoiceNo} onChange={setInvoiceNo} placeholder="e.g. 20106"/></div>
             <div><Label T={T}>Invoice Amount (Rs)</Label><Inp T={T} type="number" value={invoiceAmount} onChange={setInvoiceAmount} placeholder="Total on bill"/></div>
             <div style={{gridColumn:"1/-1"}}>
-              <Label T={T}>Paid By *</Label>
-              <div style={{display:"flex",gap:8}}>
+              <Label T={T}>Paid By * <span style={{fontSize:10,color:T.muted,fontFamily:MO}}>(manual — not on bill)</span></Label>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                 {PAID_BY.map(p=>(
                   <button key={p} onClick={()=>setPaidBy(p)}
-                    style={{flex:1,padding:"9px 4px",borderRadius:8,border:`2px solid ${paidBy===p?T.accent:T.border}`,background:paidBy===p?T.accentDim:T.card,color:paidBy===p?T.accent:T.muted,cursor:"pointer",fontFamily:MO,fontSize:10,fontWeight:700,textAlign:"center"}}>
+                    style={{flex:1,padding:"9px 4px",borderRadius:8,border:`2px solid ${paidBy===p?T.accent:T.border}`,background:paidBy===p?T.accentDim:T.card,color:paidBy===p?T.accent:T.muted,cursor:"pointer",fontFamily:MO,fontSize:10,fontWeight:700,textAlign:"center",minWidth:80}}>
                     {p}
                   </button>
                 ))}
               </div>
             </div>
-            <div style={{gridColumn:"1/-1"}}><Label T={T}>Notes</Label><Inp T={T} value={notes} onChange={setNotes} placeholder="Any notes…"/></div>
           </div>
 
           <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
-            <Btn T={T} v="primary" onClick={()=>setStep(2)} disabled={!supplier||!invoiceNo} s={{padding:"11px 28px"}}>Next → Items</Btn>
+            <Btn T={T} v="primary" onClick={()=>setStep(2)} disabled={!supplier||!invoiceNo} s={{padding:"12px 28px"}}>Next → Items</Btn>
           </div>
         </Card>
       )}
 
-      {/* STEP 2 — ITEMS */}
+      {/* STEP 2 — ITEMS & PHOTOS */}
       {step===2&&(
         <div>
-          <Card T={T} s={{padding:20,marginBottom:12}}>
-            <div style={{fontSize:16,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:4}}>📦 Items Received</div>
-            <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:14}}>Search inventory or type freely for items not in system</div>
+          <div style={{fontSize:16,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:4}}>📦 Items — one card per item</div>
+          <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:14}}>Each item will be saved as a separate GRN record</div>
 
-            {/* Search & add */}
-            <div style={{position:"relative",marginBottom:12}}>
-              <Inp T={T} value={itemSearch} onChange={setItemSearch} placeholder="Search inventory item or type new item name…"/>
-              {itemSearchResults.length>0&&(
-                <div style={{position:"absolute",top:"100%",left:0,right:0,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,zIndex:50,overflow:"hidden",boxShadow:"0 4px 12px #0002"}}>
-                  {itemSearchResults.map(i=>(
-                    <div key={i.id} onClick={()=>addItem(i)} style={{padding:"10px 14px",cursor:"pointer",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between"}}
-                      onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                      <div>
-                        <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{i.name}</div>
-                        <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{i.code} · Stock: {i.stock} · Rs {i.perUnit||"—"}</div>
-                      </div>
-                      <span style={{fontSize:10,color:T.ok,fontFamily:MO,fontWeight:700,alignSelf:"center"}}>+ Add</span>
-                    </div>
-                  ))}
-                  {itemSearch&&<div onClick={()=>addItem(null)} style={{padding:"10px 14px",cursor:"pointer",color:T.accent,fontFamily:MO,fontSize:12,fontWeight:700,background:T.accentDim}}
-                    onMouseEnter={e=>e.currentTarget.style.opacity="0.8"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
-                    + Add "{itemSearch}" as new item (not in inventory)
-                  </div>}
+          {items.map((item,idx)=>(
+            <Card T={T} key={item.id} s={{padding:16,marginBottom:12,border:`1px solid ${item.inventoryType==="fb"?T.ok:item.inventoryType==="glass"?T.accent:item.name?T.warn:T.border}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:MO}}>Item {idx+1}</div>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  {item.inventoryType==="fb"&&<span style={{fontSize:9,background:T.okBg,color:T.ok,fontFamily:MO,fontWeight:700,padding:"2px 7px",borderRadius:3}}>✅ F&B</span>}
+                  {item.inventoryType==="glass"&&<span style={{fontSize:9,background:T.accentDim,color:T.accent,fontFamily:MO,fontWeight:700,padding:"2px 7px",borderRadius:3}}>✅ GLASS</span>}
+                  {item.name&&!item.inventoryType&&<span style={{fontSize:9,background:T.warnBg,color:T.warn,fontFamily:MO,fontWeight:700,padding:"2px 7px",borderRadius:3}}>⚠ NOT IN SYSTEM</span>}
+                  {items.length>1&&<button onClick={()=>removeItem(item.id)} style={{background:"none",border:"none",color:T.low,cursor:"pointer",fontSize:16,padding:"0 4px"}}>✕</button>}
                 </div>
-              )}
-            </div>
-
-            {/* Items list */}
-            {items.length===0&&(
-              <div style={{textAlign:"center",padding:24,color:T.muted,fontFamily:MO,fontSize:12,border:`1px dashed ${T.border}`,borderRadius:8}}>
-                No items added yet — search above to add items
               </div>
-            )}
 
-            {items.map((item,idx)=>(
-              <div key={item.id} style={{background:T.card2,borderRadius:10,padding:"12px 14px",marginBottom:8,border:`1px solid ${item.priceChanged?T.warn:T.border}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{item.name}</div>
-                    <div style={{display:"flex",gap:6,marginTop:2}}>
-                      {item.inInventory&&<span style={{fontSize:9,background:T.okBg,color:T.ok,fontFamily:MO,fontWeight:700,padding:"1px 6px",borderRadius:3}}>IN INVENTORY</span>}
-                      {!item.inInventory&&<span style={{fontSize:9,background:T.warnBg,color:T.warn,fontFamily:MO,fontWeight:700,padding:"1px 6px",borderRadius:3}}>NOT IN INVENTORY</span>}
-                      {item.priceChanged&&<span style={{fontSize:9,background:T.warnBg,color:T.warn,fontFamily:MO,fontWeight:700,padding:"1px 6px",borderRadius:3}}>⚠ PRICE CHANGED</span>}
+              {/* Item search */}
+              <div style={{position:"relative",marginBottom:10}}>
+                <Label T={T}>Item Name</Label>
+                <Inp T={T} value={item.search} onChange={v=>updateItem(item.id,"search",v)} placeholder="Search inventory or type item name…"/>
+                {item.searchResults?.length>0&&(
+                  <div style={{position:"absolute",top:"100%",left:0,right:0,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,zIndex:50,overflow:"hidden",boxShadow:"0 4px 12px #0002"}}>
+                    {item.searchResults.map(inv=>(
+                      <div key={inv.id} onClick={()=>selectInventoryItem(item.id,inv)} style={{padding:"9px 14px",cursor:"pointer",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between"}}
+                        onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{inv.name}</div>
+                          <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{inv._type==="fb"?`F&B · ${inv.code} · Stock: ${inv.stock}`:`Glass · ${inv.shortCode}`} · Rs {inv.perUnit||"—"}</div>
+                        </div>
+                        <span style={{fontSize:10,color:inv._type==="fb"?T.ok:T.accent,fontFamily:MO,fontWeight:700,alignSelf:"center"}}>{inv._type==="fb"?"F&B":"Glass"}</span>
+                      </div>
+                    ))}
+                    <div onClick={()=>{setItems(prev=>prev.map(i=>i.id===item.id?{...i,name:item.search,search:item.search,searchResults:[],itemId:null,inventoryType:null}:i));}} style={{padding:"9px 14px",cursor:"pointer",color:T.warn,fontFamily:MO,fontSize:12,fontWeight:700,background:T.warnBg}}>
+                      + Use "{item.search}" — not in inventory
                     </div>
-                  </div>
-                  <button onClick={()=>removeItem(item.id)} style={{background:"none",border:"none",color:T.low,cursor:"pointer",fontSize:16,padding:4}}>✕</button>
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-                  <div>
-                    <div style={{fontSize:9,color:T.muted,fontFamily:MO,marginBottom:3}}>QTY</div>
-                    <input type="number" value={item.qty} onChange={e=>updateItem(item.id,"qty",e.target.value)} placeholder="0"
-                      style={{width:"100%",padding:"8px 10px",background:T.bg,border:`1px solid ${T.border}`,borderRadius:7,color:T.text,fontSize:15,fontWeight:700,fontFamily:MO,outline:"none",boxSizing:"border-box"}}/>
-                  </div>
-                  <div>
-                    <div style={{fontSize:9,color:T.muted,fontFamily:MO,marginBottom:3}}>PRICE/UNIT (Rs){item.inInventory&&<span style={{color:T.muted}}> was {item.currentPrice}</span>}</div>
-                    <input type="number" value={item.price} onChange={e=>updateItem(item.id,"price",e.target.value)} placeholder="0"
-                      style={{width:"100%",padding:"8px 10px",background:T.bg,border:`1px solid ${item.priceChanged?T.warn:T.border}`,borderRadius:7,color:item.priceChanged?T.warn:T.text,fontSize:15,fontWeight:700,fontFamily:MO,outline:"none",boxSizing:"border-box"}}/>
-                  </div>
-                  <div>
-                    <div style={{fontSize:9,color:T.muted,fontFamily:MO,marginBottom:3}}>TOTAL</div>
-                    <div style={{padding:"8px 10px",background:T.card,borderRadius:7,fontSize:15,fontWeight:800,color:T.accent,fontFamily:MO}}>
-                      Rs {((Number(item.qty)||0)*(Number(item.price)||0)).toLocaleString()}
-                    </div>
-                  </div>
-                </div>
-                {item.priceChanged&&(
-                  <div style={{marginTop:8,fontSize:11,color:T.warn,fontFamily:MO,background:T.warnBg,padding:"6px 10px",borderRadius:6}}>
-                    ⚠ Price will update in inventory: Rs {item.currentPrice} → Rs {item.newPrice}
                   </div>
                 )}
               </div>
-            ))}
 
-            {items.length>0&&(
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 14px",background:T.accentDim,borderRadius:8,marginTop:8,border:`1px solid ${T.accent}44`}}>
-                <span style={{fontSize:13,fontWeight:600,fontFamily:SE,color:T.text}}>Calculated Total</span>
-                <span style={{fontSize:18,fontWeight:800,color:T.accent,fontFamily:MO}}>Rs {totalCalc.toLocaleString()}</span>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
+                <div>
+                  <div style={{fontSize:9,color:T.muted,fontFamily:MO,marginBottom:3}}>QTY</div>
+                  <input type="number" value={item.qty} onChange={e=>updateItem(item.id,"qty",e.target.value)} placeholder="0"
+                    style={{width:"100%",padding:"10px",background:T.bg,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:18,fontWeight:800,fontFamily:MO,outline:"none",boxSizing:"border-box",textAlign:"center"}}/>
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:T.muted,fontFamily:MO,marginBottom:3}}>PRICE/UNIT (Rs){item.inventoryType&&item.currentPrice?<span style={{color:T.muted}}> was {item.currentPrice}</span>:""}</div>
+                  <input type="number" value={item.price} onChange={e=>updateItem(item.id,"price",e.target.value)} placeholder="0"
+                    style={{width:"100%",padding:"10px",background:T.bg,border:`1px solid ${item.priceChanged?T.warn:T.border}`,borderRadius:8,color:item.priceChanged?T.warn:T.text,fontSize:18,fontWeight:800,fontFamily:MO,outline:"none",boxSizing:"border-box",textAlign:"center"}}/>
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:T.muted,fontFamily:MO,marginBottom:3}}>TOTAL</div>
+                  <div style={{padding:"10px",background:T.accentDim,borderRadius:8,fontSize:16,fontWeight:800,color:T.accent,fontFamily:MO,textAlign:"center"}}>
+                    Rs {((Number(item.qty)||0)*(Number(item.price)||0)).toLocaleString()}
+                  </div>
+                </div>
               </div>
-            )}
-          </Card>
+
+              {item.priceChanged&&<div style={{fontSize:11,color:T.warn,fontFamily:MO,background:T.warnBg,padding:"6px 10px",borderRadius:6,marginBottom:10}}>⚠ Price will update in inventory: Rs {item.currentPrice} → Rs {item.newPrice}</div>}
+
+              {/* Item photo */}
+              <div>
+                <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginBottom:6}}>ITEM PHOTO <span style={{color:T.low}}>* required</span></div>
+                {item.capturing?(
+                  <div style={{position:"relative",borderRadius:8,overflow:"hidden"}}>
+                    <video ref={videoRef} style={{width:"100%",maxHeight:180,objectFit:"cover",display:"block"}} muted playsInline/>
+                    <button onClick={()=>captureItemPhoto(item.id)} style={{position:"absolute",bottom:8,left:"50%",transform:"translateX(-50%)",background:T.accent,border:"none",borderRadius:20,padding:"8px 20px",cursor:"pointer",fontFamily:MO,fontSize:13,fontWeight:700,color:"#fff"}}>📸 Capture</button>
+                    <button onClick={()=>{streamRef.current?.getTracks().forEach(t=>t.stop());setItems(prev=>prev.map(i=>i.id===item.id?{...i,capturing:false}:i));}} style={{position:"absolute",top:6,right:6,background:"#000a",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",color:"#fff",fontSize:11}}>✕</button>
+                  </div>
+                ):item.itemPhoto?(
+                  <div style={{position:"relative",display:"inline-block"}}>
+                    <img src={item.itemPhoto} alt="item" style={{width:100,height:100,objectFit:"cover",borderRadius:8,border:`1px solid ${T.border}`}}/>
+                    <button onClick={()=>setItems(prev=>prev.map(i=>i.id===item.id?{...i,itemPhoto:null}:i))} style={{position:"absolute",top:-4,right:-4,background:T.low,border:"none",borderRadius:"50%",width:18,height:18,cursor:"pointer",color:"#fff",fontSize:10,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+                  </div>
+                ):(
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>startItemCamera(item.id)} style={{flex:1,padding:"10px",border:`1px dashed ${T.border}`,borderRadius:8,background:T.card,color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700}}>📷 Camera</button>
+                    <label style={{flex:1,padding:"10px",border:`1px dashed ${T.border}`,borderRadius:8,background:T.card,color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      🖼 Gallery<input type="file" accept="image/*" onChange={e=>{const file=e.target.files[0];if(!file) return;const reader=new FileReader();reader.onload=ev=>setItems(prev=>prev.map(i=>i.id===item.id?{...i,itemPhoto:ev.target.result}:i));reader.readAsDataURL(file);}} style={{display:"none"}}/>
+                    </label>
+                  </div>
+                )}
+              </div>
+            </Card>
+          ))}
+
+          <button onClick={addItem} style={{width:"100%",padding:"12px",borderRadius:10,border:`1px dashed ${T.accent}`,background:T.accentDim,color:T.accent,cursor:"pointer",fontFamily:MO,fontSize:13,fontWeight:700,marginBottom:16}}>+ Add Another Item</button>
 
           <div style={{display:"flex",gap:8,justifyContent:"space-between"}}>
             <Btn T={T} onClick={()=>setStep(1)}>← Back</Btn>
-            <Btn T={T} v="primary" onClick={()=>setStep(3)} disabled={items.length===0} s={{padding:"11px 28px"}}>Next → Photos</Btn>
+            <Btn T={T} v="primary" onClick={()=>setStep(3)} disabled={items.some(i=>!i.name||!i.qty||!i.price)} s={{padding:"12px 28px"}}>Next → Review</Btn>
           </div>
         </div>
       )}
 
-      {/* STEP 3 — PHOTOS */}
+      {/* STEP 3 — REVIEW */}
       {step===3&&(
-        <div>
-          <Card T={T} s={{padding:20,marginBottom:12}}>
-            <div style={{fontSize:16,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:4}}>📸 Photos</div>
-            <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:16}}>Bill/invoice photo required · Items photo required</div>
-
-            {capturing?(
-              <div style={{position:"relative",borderRadius:10,overflow:"hidden",marginBottom:12}}>
-                <video ref={videoRef} style={{width:"100%",maxHeight:240,objectFit:"cover",display:"block"}} muted playsInline/>
-                <button onClick={()=>capturePhoto(capturing)} style={{position:"absolute",bottom:10,left:"50%",transform:"translateX(-50%)",background:T.accent,border:"none",borderRadius:20,padding:"10px 24px",cursor:"pointer",fontFamily:MO,fontSize:13,fontWeight:700,color:"#fff"}}>📸 Capture</button>
-                <button onClick={()=>{streamRef.current?.getTracks().forEach(t=>t.stop());setCapturing(null);}} style={{position:"absolute",top:8,right:8,background:"#000a",border:"none",borderRadius:6,padding:"6px 10px",cursor:"pointer",color:"#fff",fontSize:12}}>✕</button>
-              </div>
-            ):(
-              <>
-                {/* Bill photos */}
-                <div style={{marginBottom:16}}>
-                  <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE,marginBottom:8}}>📄 Bill / Invoice Photo <span style={{color:T.low,fontSize:10}}>* required</span></div>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
-                    {billPhotos.map((p,i)=>(
-                      <div key={i} style={{position:"relative"}}>
-                        <img src={p} alt="bill" style={{width:80,height:80,objectFit:"cover",borderRadius:8,border:`1px solid ${T.border}`}}/>
-                        <button onClick={()=>setBillPhotos(prev=>prev.filter((_,j)=>j!==i))} style={{position:"absolute",top:-4,right:-4,background:T.low,border:"none",borderRadius:"50%",width:18,height:18,cursor:"pointer",color:"#fff",fontSize:10,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
-                      </div>
-                    ))}
-                    {billPhotos.length<5&&(
-                      <div style={{display:"flex",gap:6}}>
-                        <button onClick={()=>startCamera("bill")} style={{width:80,height:80,borderRadius:8,border:`1px dashed ${T.border}`,background:T.card,color:T.muted,cursor:"pointer",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>📷</button>
-                        <label style={{width:80,height:80,borderRadius:8,border:`1px dashed ${T.border}`,background:T.card,color:T.muted,cursor:"pointer",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                          🖼<input type="file" accept="image/*" multiple onChange={e=>uploadPhoto(e,"bill")} style={{display:"none"}}/>
-                        </label>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Item photos */}
-                <div>
-                  <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE,marginBottom:4}}>📦 Photo of Items Received <span style={{color:T.low,fontSize:10}}>* required</span></div>
-                  <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginBottom:8}}>All items in frame, no boxes, count visible clearly</div>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                    {itemPhotos.map((p,i)=>(
-                      <div key={i} style={{position:"relative"}}>
-                        <img src={p} alt="items" style={{width:80,height:80,objectFit:"cover",borderRadius:8,border:`1px solid ${T.border}`}}/>
-                        <button onClick={()=>setItemPhotos(prev=>prev.filter((_,j)=>j!==i))} style={{position:"absolute",top:-4,right:-4,background:T.low,border:"none",borderRadius:"50%",width:18,height:18,cursor:"pointer",color:"#fff",fontSize:10,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
-                      </div>
-                    ))}
-                    {itemPhotos.length<5&&(
-                      <div style={{display:"flex",gap:6}}>
-                        <button onClick={()=>startCamera("items")} style={{width:80,height:80,borderRadius:8,border:`1px dashed ${T.border}`,background:T.card,color:T.muted,cursor:"pointer",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>📷</button>
-                        <label style={{width:80,height:80,borderRadius:8,border:`1px dashed ${T.border}`,background:T.card,color:T.muted,cursor:"pointer",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                          🖼<input type="file" accept="image/*" multiple onChange={e=>uploadPhoto(e,"items")} style={{display:"none"}}/>
-                        </label>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-          </Card>
-
-          <div style={{display:"flex",gap:8,justifyContent:"space-between"}}>
-            <Btn T={T} onClick={()=>setStep(2)}>← Back</Btn>
-            <Btn T={T} v="primary" onClick={()=>setStep(4)} disabled={billPhotos.length===0||itemPhotos.length===0} s={{padding:"11px 28px"}}>Next → Review</Btn>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 4 — REVIEW */}
-      {step===4&&(
         <div>
           <Card T={T} s={{padding:20,marginBottom:12}}>
             <div style={{fontSize:16,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:14}}>✅ Review & Submit</div>
 
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
-              {[["Supplier",supplier==="Other"?customSupplier:supplier],["Invoice No.",invoiceNo],["Paid By",paidBy],["Staff",currentUser.name],["Date",nowStr()],["Items",items.length+" items"]].map(([label,val])=>(
-                <div key={label} style={{background:T.card2,borderRadius:8,padding:"10px 12px"}}>
-                  <div style={{fontSize:9,color:T.muted,fontFamily:MO,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:2}}>{label}</div>
-                  <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{val||"—"}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+              {[["Supplier",supplier==="Other"?customSupplier:supplier],["Invoice No.",invoiceNo],["Paid By",paidBy],["Staff",currentUser.name],["Date & Time",nowStr()],["Total GRNs",items.length+" records"]].map(([l,v])=>(
+                <div key={l} style={{background:T.card2,borderRadius:8,padding:"10px 12px"}}>
+                  <div style={{fontSize:9,color:T.muted,fontFamily:MO,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:2}}>{l}</div>
+                  <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{v||"—"}</div>
                 </div>
               ))}
             </div>
 
-            {/* Items summary */}
-            <div style={{marginBottom:14}}>
-              {items.map(item=>(
-                <div key={item.id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{item.name}</div>
-                    <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>×{item.qty} @ Rs {item.price}</div>
-                    {item.priceChanged&&<div style={{fontSize:10,color:T.warn,fontFamily:MO}}>⚠ Price update: Rs {item.currentPrice}→{item.newPrice}</div>}
-                  </div>
-                  <div style={{fontSize:14,fontWeight:700,color:T.accent,fontFamily:MO}}>Rs {((Number(item.qty)||0)*(Number(item.price)||0)).toLocaleString()}</div>
+            {billPhoto&&<img src={billPhoto} alt="bill" style={{width:"100%",maxHeight:120,objectFit:"cover",borderRadius:8,border:`1px solid ${T.border}`,marginBottom:14}}/>}
+
+            {items.map((item,i)=>(
+              <div key={item.id} style={{display:"flex",gap:10,alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${T.border}`}}>
+                {item.itemPhoto&&<img src={item.itemPhoto} alt="" style={{width:48,height:48,objectFit:"cover",borderRadius:6,flexShrink:0}}/>}
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{item.name}</div>
+                  <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>×{item.qty} @ Rs {item.price}</div>
+                  {item.inventoryType==="fb"&&<div style={{fontSize:10,color:T.ok,fontFamily:MO}}>→ F&B Stores stock in</div>}
+                  {item.inventoryType==="glass"&&<div style={{fontSize:10,color:T.accent,fontFamily:MO}}>→ Glassware stock in</div>}
+                  {!item.inventoryType&&<div style={{fontSize:10,color:T.warn,fontFamily:MO}}>⚠ Not in inventory — record only</div>}
+                  {item.priceChanged&&<div style={{fontSize:10,color:T.warn,fontFamily:MO}}>⚠ Price update: Rs {item.currentPrice}→{item.newPrice}</div>}
                 </div>
-              ))}
-              <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",marginTop:4}}>
-                <span style={{fontSize:14,fontWeight:700,fontFamily:SE,color:T.text}}>Total</span>
-                <span style={{fontSize:18,fontWeight:800,color:T.accent,fontFamily:MO}}>Rs {totalCalc.toLocaleString()}</span>
+                <div style={{fontSize:15,fontWeight:800,color:T.accent,fontFamily:MO,flexShrink:0}}>Rs {((Number(item.qty)||0)*(Number(item.price)||0)).toLocaleString()}</div>
               </div>
-            </div>
+            ))}
 
-            {/* Photos preview */}
-            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
-              {[...billPhotos,...itemPhotos].map((p,i)=>(
-                <img key={i} src={p} alt="" style={{width:60,height:60,objectFit:"cover",borderRadius:6,border:`1px solid ${T.border}`}}/>
-              ))}
+            <div style={{display:"flex",justifyContent:"space-between",padding:"12px 0",marginTop:4}}>
+              <span style={{fontSize:15,fontWeight:700,fontFamily:SE,color:T.text}}>Grand Total</span>
+              <span style={{fontSize:20,fontWeight:800,color:T.accent,fontFamily:MO}}>Rs {items.reduce((s,i)=>s+(Number(i.qty||0)*Number(i.price||0)),0).toLocaleString()}</span>
             </div>
-
-            {items.filter(i=>i.priceChanged).length>0&&(
-              <div style={{background:T.warnBg,border:`1px solid ${T.warn}44`,borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.warn,fontFamily:MO}}>
-                ⚠ {items.filter(i=>i.priceChanged).length} item(s) have price changes — inventory will be updated automatically
-              </div>
-            )}
           </Card>
 
           <div style={{display:"flex",gap:8,justifyContent:"space-between"}}>
-            <Btn T={T} onClick={()=>setStep(3)}>← Back</Btn>
-            <Btn T={T} v="primary" onClick={submit} s={{padding:"13px 32px",fontSize:14}}>✅ Submit GRN</Btn>
+            <Btn T={T} onClick={()=>setStep(2)}>← Back</Btn>
+            <Btn T={T} v="primary" onClick={submit} s={{padding:"13px 32px",fontSize:14}}>✅ Submit {items.length} GRN{items.length!==1?"s":""}</Btn>
           </div>
         </div>
       )}
@@ -3471,37 +3412,30 @@ function GRNForm({T,currentUser,fbItems,onSave,isMobile}){
 function GRNViewModal({T,grn,onClose}){
   return(
     <div style={{position:"fixed",inset:0,background:"#000a",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <Card T={T} s={{padding:24,width:560,maxWidth:"100%",maxHeight:"92vh",overflowY:"auto"}}>
+      <Card T={T} s={{padding:24,width:480,maxWidth:"100%",maxHeight:"92vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div style={{fontSize:18,fontWeight:600,fontFamily:SE,color:T.text}}>GRN Details</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:20}}>✕</button>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
-          {[["Supplier",grn.supplier],["Invoice No.",grn.invoiceNo],["Date",grn.date],["Staff",grn.staffName],["Paid By",grn.paidBy],["Total",`Rs ${(grn.totalCalc||0).toLocaleString()}`]].map(([l,v])=>(
+          {[["Supplier",grn.supplier],["Invoice No.",grn.invoiceNo],["Date",grn.date],["Staff",grn.staffName],["Paid By",grn.paidBy],["Total",`Rs ${(grn.total||0).toLocaleString()}`]].map(([l,v])=>(
             <div key={l} style={{background:T.card2,borderRadius:8,padding:"10px 12px"}}>
               <div style={{fontSize:9,color:T.muted,fontFamily:MO,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:2}}>{l}</div>
               <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{v||"—"}</div>
             </div>
           ))}
         </div>
-        <div style={{marginBottom:14}}>
-          <div style={{fontSize:13,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:8}}>Items</div>
-          {grn.items?.map((item,i)=>(
-            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}>
-              <div>
-                <div style={{fontSize:13,color:T.text,fontFamily:SE,fontWeight:600}}>{item.name}</div>
-                <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>×{item.qty} @ Rs {item.price} {!item.inInventory&&"· not in inventory"}</div>
-                {item.priceChanged&&<div style={{fontSize:10,color:T.warn,fontFamily:MO}}>Price updated: Rs {item.currentPrice}→{item.newPrice}</div>}
-              </div>
-              <div style={{fontSize:14,fontWeight:700,color:T.accent,fontFamily:MO}}>Rs {((Number(item.qty)||0)*(Number(item.price)||0)).toLocaleString()}</div>
-            </div>
-          ))}
+        <div style={{background:T.card2,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+          <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE,marginBottom:4}}>{grn.itemName}</div>
+          <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>×{grn.qty} @ Rs {grn.price}</div>
+          {grn.inventoryType==="fb"&&<div style={{fontSize:11,color:T.ok,fontFamily:MO,marginTop:2}}>✅ Added to F&B Stores</div>}
+          {grn.inventoryType==="glass"&&<div style={{fontSize:11,color:T.accent,fontFamily:MO,marginTop:2}}>✅ Added to Glassware</div>}
+          {!grn.inventoryType&&<div style={{fontSize:11,color:T.warn,fontFamily:MO,marginTop:2}}>⚠ Not in inventory</div>}
+          {grn.priceChanged&&<div style={{fontSize:11,color:T.warn,fontFamily:MO,marginTop:2}}>Price updated: Rs {grn.currentPrice}→{grn.newPrice}</div>}
         </div>
-        {grn.notes&&<div style={{fontSize:12,color:T.muted,fontFamily:MO,marginBottom:14}}>Notes: {grn.notes}</div>}
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {[...(grn.billPhotos||[]),...(grn.itemPhotos||[])].map((p,i)=>(
-            <img key={i} src={p} alt="" style={{width:80,height:80,objectFit:"cover",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer"}} onClick={()=>window.open(p,"_blank")}/>
-          ))}
+          {grn.billPhoto&&<img src={grn.billPhoto} alt="bill" style={{flex:1,minWidth:120,maxHeight:120,objectFit:"cover",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer"}} onClick={()=>window.open(grn.billPhoto,"_blank")}/>}
+          {grn.itemPhoto&&<img src={grn.itemPhoto} alt="item" style={{flex:1,minWidth:120,maxHeight:120,objectFit:"cover",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer"}} onClick={()=>window.open(grn.itemPhoto,"_blank")}/>}
         </div>
       </Card>
     </div>
@@ -3520,33 +3454,29 @@ function GRNHistory({T,grnLog,isMobile,onView}){
       </div>
       <div style={{background:T.card2,borderRadius:8,padding:"10px 14px",marginBottom:14,border:`1px solid ${T.border}`}}>
         <DateRangePicker T={T} startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} onClear={clear}/>
-        <div style={{marginTop:8}}>
-          <Sel T={T} value={supplierFilter} onChange={setSupplierFilter} s={{minWidth:140}}>
-            {suppliers.map(s=><option key={s} value={s}>{s==="all"?"All Suppliers":s}</option>)}
-          </Sel>
-        </div>
+        <div style={{marginTop:8}}><Sel T={T} value={supplierFilter} onChange={setSupplierFilter} s={{minWidth:140}}>{suppliers.map(s=><option key={s} value={s}>{s==="all"?"All Suppliers":s}</option>)}</Sel></div>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {displayed.map((grn,i)=>(
           <Card T={T} key={grn.id||i} s={{padding:"14px 16px",cursor:"pointer"}} onClick={()=>onView(grn)}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
               <div>
-                <div style={{fontSize:14,fontWeight:700,color:T.text,fontFamily:SE}}>{grn.supplier}</div>
+                <div style={{fontSize:14,fontWeight:700,color:T.text,fontFamily:SE}}>{grn.itemName}</div>
+                <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{grn.supplier} · #{grn.invoiceNo}</div>
                 <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{grn.staffName} · {grn.date}</div>
-                <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>Invoice: {grn.invoiceNo} · {grn.paidBy}</div>
+                {grn.inventoryType==="fb"&&<div style={{fontSize:10,color:T.ok,fontFamily:MO,marginTop:2}}>✅ F&B Stores</div>}
+                {grn.inventoryType==="glass"&&<div style={{fontSize:10,color:T.accent,fontFamily:MO,marginTop:2}}>✅ Glassware</div>}
+                {!grn.inventoryType&&<div style={{fontSize:10,color:T.warn,fontFamily:MO,marginTop:2}}>⚠ Not in inventory</div>}
               </div>
               <div style={{textAlign:"right"}}>
-                <div style={{fontSize:18,fontWeight:800,color:T.accent,fontFamily:MO}}>Rs {(grn.totalCalc||0).toLocaleString()}</div>
-                <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{grn.items?.length||0} items</div>
+                <div style={{fontSize:18,fontWeight:800,color:T.accent,fontFamily:MO}}>Rs {(grn.total||0).toLocaleString()}</div>
+                <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>×{grn.qty} @ Rs {grn.price}</div>
               </div>
             </div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {[...(grn.billPhotos||[]),...(grn.itemPhotos||[])].slice(0,4).map((p,j)=>(
-                <img key={j} src={p} alt="" style={{width:44,height:44,objectFit:"cover",borderRadius:6,border:`1px solid ${T.border}`}}/>
-              ))}
-              {(grn.billPhotos?.length||0)+(grn.itemPhotos?.length||0)>4&&<div style={{width:44,height:44,borderRadius:6,background:T.card2,border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:T.muted,fontFamily:MO}}>+{(grn.billPhotos?.length||0)+(grn.itemPhotos?.length||0)-4}</div>}
+            <div style={{display:"flex",gap:6}}>
+              {grn.billPhoto&&<img src={grn.billPhoto} alt="bill" style={{width:44,height:44,objectFit:"cover",borderRadius:6,border:`1px solid ${T.border}`}}/>}
+              {grn.itemPhoto&&<img src={grn.itemPhoto} alt="item" style={{width:44,height:44,objectFit:"cover",borderRadius:6,border:`1px solid ${T.border}`}}/>}
             </div>
-            <div style={{fontSize:10,color:T.accent,fontFamily:MO,marginTop:6}}>Tap to view details →</div>
           </Card>
         ))}
         {!displayed.length&&<div style={{textAlign:"center",padding:48,color:T.muted,fontFamily:SE}}><div style={{fontSize:32,marginBottom:8}}>📋</div>No GRN records found</div>}
@@ -3557,44 +3487,20 @@ function GRNHistory({T,grnLog,isMobile,onView}){
 
 function GRNReports({T,grnLog,isMobile}){
   const {filtered,startDate,endDate,setStartDate,setEndDate,clear}=useDateFilter(grnLog);
-  const totalSpend=filtered.reduce((s,g)=>s+(g.totalCalc||0),0);
+  const totalSpend=filtered.reduce((s,g)=>s+(g.total||0),0);
   const totalGRNs=filtered.length;
-
   const bySupplier={};
-  filtered.forEach(g=>{
-    const s=g.supplier||"Unknown";
-    if(!bySupplier[s]) bySupplier[s]={count:0,total:0};
-    bySupplier[s].count++;
-    bySupplier[s].total+=(g.totalCalc||0);
-  });
-
+  filtered.forEach(g=>{const s=g.supplier||"Unknown";if(!bySupplier[s]) bySupplier[s]={count:0,total:0};bySupplier[s].count++;bySupplier[s].total+=(g.total||0);});
   const byPayment={};
-  filtered.forEach(g=>{
-    const p=g.paidBy||"Unknown";
-    if(!byPayment[p]) byPayment[p]={count:0,total:0};
-    byPayment[p].count++;
-    byPayment[p].total+=(g.totalCalc||0);
-  });
-
+  filtered.forEach(g=>{const p=g.paidBy||"Unknown";if(!byPayment[p]) byPayment[p]={count:0,total:0};byPayment[p].count++;byPayment[p].total+=(g.total||0);});
   const byItem={};
-  filtered.forEach(g=>{
-    (g.items||[]).forEach(i=>{
-      const n=i.name||"Unknown";
-      if(!byItem[n]) byItem[n]={qty:0,total:0,count:0};
-      byItem[n].qty+=Number(i.qty||0);
-      byItem[n].total+=(Number(i.qty||0))*(Number(i.price||0));
-      byItem[n].count++;
-    });
-  });
-
+  filtered.forEach(g=>{const n=g.itemName||"Unknown";if(!byItem[n]) byItem[n]={qty:0,total:0,count:0};byItem[n].qty+=Number(g.qty||0);byItem[n].total+=(g.total||0);byItem[n].count++;});
   return(
     <div>
       <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Reports</div>
       <div style={{background:T.card2,borderRadius:8,padding:"10px 14px",marginBottom:14,border:`1px solid ${T.border}`}}>
-        <div style={{fontSize:10,fontWeight:700,color:T.muted,fontFamily:MO,marginBottom:8,letterSpacing:"0.08em"}}>FILTER BY DATE</div>
         <DateRangePicker T={T} startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} onClear={clear}/>
       </div>
-
       <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(3,1fr)",gap:12,marginBottom:14}}>
         {[["Total GRNs",totalGRNs,T.accent],["Total Spend",`Rs ${totalSpend.toLocaleString()}`,T.low],["Avg per GRN",`Rs ${totalGRNs?Math.round(totalSpend/totalGRNs).toLocaleString():0}`,T.ok]].map(([l,v,c])=>(
           <Card T={T} key={l} s={{padding:"16px",textAlign:"center"}}>
@@ -3603,35 +3509,32 @@ function GRNReports({T,grnLog,isMobile}){
           </Card>
         ))}
       </div>
-
       <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12,marginBottom:12}}>
         <Card T={T} s={{padding:16}}>
           <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>By Supplier</div>
           {Object.entries(bySupplier).sort((a,b)=>b[1].total-a[1].total).map(([name,data],i,arr)=>(
             <div key={name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
-              <div><div style={{fontSize:13,color:T.text,fontFamily:SE}}>{name}</div><div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{data.count} orders</div></div>
+              <div><div style={{fontSize:13,color:T.text,fontFamily:SE}}>{name}</div><div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{data.count} records</div></div>
               <div style={{fontSize:14,fontWeight:700,color:T.accent,fontFamily:MO}}>Rs {data.total.toLocaleString()}</div>
             </div>
           ))}
           {!Object.keys(bySupplier).length&&<div style={{color:T.muted,fontFamily:MO,fontSize:12}}>No data</div>}
         </Card>
-
         <Card T={T} s={{padding:16}}>
-          <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>By Payment Method</div>
+          <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>By Payment</div>
           {Object.entries(byPayment).sort((a,b)=>b[1].total-a[1].total).map(([name,data],i,arr)=>(
             <div key={name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
-              <div><div style={{fontSize:13,color:T.text,fontFamily:SE}}>{name}</div><div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{data.count} orders</div></div>
+              <div><div style={{fontSize:13,color:T.text,fontFamily:SE}}>{name}</div><div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{data.count} records</div></div>
               <div style={{fontSize:14,fontWeight:700,color:T.ok,fontFamily:MO}}>Rs {data.total.toLocaleString()}</div>
             </div>
           ))}
         </Card>
       </div>
-
       <Card T={T} s={{padding:16}}>
         <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Most Purchased Items</div>
         {Object.entries(byItem).sort((a,b)=>b[1].total-a[1].total).slice(0,10).map(([name,data],i,arr)=>(
           <div key={name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
-            <div><div style={{fontSize:13,color:T.text,fontFamily:SE}}>{name}</div><div style={{fontSize:10,color:T.muted,fontFamily:MO}}>Total qty: {data.qty} · {data.count} orders</div></div>
+            <div><div style={{fontSize:13,color:T.text,fontFamily:SE}}>{name}</div><div style={{fontSize:10,color:T.muted,fontFamily:MO}}>Total qty: {data.qty} · {data.count} records</div></div>
             <div style={{fontSize:14,fontWeight:700,color:T.accent,fontFamily:MO}}>Rs {data.total.toLocaleString()}</div>
           </div>
         ))}
@@ -4114,9 +4017,9 @@ export default function App(){
   if(!ready) return(<div style={{minHeight:"100vh",background:LIGHT.bg,display:"flex",alignItems:"center",justifyContent:"center",color:LIGHT.muted,fontFamily:SE}}><div style={{textAlign:"center"}}><HazelLogo T={LIGHT} size={50}/><div style={{marginTop:12,fontSize:16,letterSpacing:"0.12em",color:LIGHT.muted}}>Loading…</div></div></div>);
   if(!currentUser) return(<><LoginScreen T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} users={users} setUsers={setUsers} onLogin={handleLogin}/><CreatorStamp T={T}/></>);
   if(!activeModule) return(<ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m)=>{window.history.pushState({module:m},"");setActiveModule(m);}} onLogout={handleLogout}/>);
-  if(activeModule==="glassware") return(<GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}} setAuditLog={setAuditLog} auditLog={auditLog}/>);
-  if(activeModule==="wastage") return(<WastageModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}} fbItems={items} glassItems={[]} setFbItems={setItems} setGlassItems={()=>{}}/>);
-  if(activeModule==="grn") return(<GRNModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}} fbItems={items} setFbItems={setItems}/>);
+  if(activeModule==="glassware") return(<GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}} onLogout={handleLogout} setAuditLog={setAuditLog} auditLog={auditLog}/>);
+  if(activeModule==="wastage") return(<WastageModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}} onLogout={handleLogout} fbItems={items} glassItems={[]} setFbItems={setItems} setGlassItems={()=>{}}/>);
+  if(activeModule==="grn") return(<GRNModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}} onLogout={handleLogout} fbItems={items} setFbItems={setItems} glassItems={[]} setGlassItems={()=>{}}/>);
 
   const role=ROLES[currentUser.role];
   const allowedTabs=ALL_TABS.filter(t=>role.tabs.includes(t.key));
