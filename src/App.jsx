@@ -47,8 +47,8 @@ const LIGHT={
 };
 
 const ROLES={
-  admin:{label:"Admin",tabs:["out","in","inv","count","var","po","hist","reports","audit","users","devices"],canEditItems:true,canEditUsers:true,canEditDevices:true,canViewReports:true},
-  supervisor:{label:"Supervisor",tabs:["out","in","inv","count","var","po","hist","reports","audit"],canEditItems:true,canViewReports:true},
+  admin:{label:"Admin",tabs:["out","in","inv","count","var","po","hist","reports","audit","value","users","devices"],canEditItems:true,canEditUsers:true,canEditDevices:true,canViewReports:true},
+  supervisor:{label:"Supervisor",tabs:["out","in","inv","count","var","po","hist","reports","audit","value"],canEditItems:true,canViewReports:true},
   counter:{label:"Stock Counter",tabs:["out","in","count","hist"],canEditItems:false},
   staff:{label:"Staff",tabs:["out","in"],canEditItems:false},
 };
@@ -975,6 +975,52 @@ function BarChart({T,data,maxVal}){
   );
 }
 
+function StockValueTab({T,items,isMobile}){
+  const totalValue=items.reduce((s,i)=>s+(Number(i.stock||0)*Number(i.perUnit||0)),0);
+  const byDept={};
+  items.forEach(i=>{const d=i.dept||"Other";if(!byDept[d]) byDept[d]={count:0,value:0,lowCount:0};byDept[d].count++;byDept[d].value+=Number(i.stock||0)*Number(i.perUnit||0);if(i.stock<i.minQty) byDept[d].lowCount++;});
+  const sorted=[...items].sort((a,b)=>(Number(b.stock||0)*Number(b.perUnit||0))-(Number(a.stock||0)*Number(a.perUnit||0)));
+  return(
+    <div>
+      <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:14}}>Stock Value</div>
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr 1fr",gap:12,marginBottom:16}}>
+        <Card T={T} s={{padding:16,textAlign:"center",gridColumn:isMobile?"auto":"1/-1"}}>
+          <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:4}}>TOTAL INVENTORY VALUE</div>
+          <div style={{fontSize:32,fontWeight:800,color:T.ok,fontFamily:MO}}>Rs {totalValue.toLocaleString()}</div>
+        </Card>
+        {Object.entries(byDept).map(([dept,data])=>(
+          <Card T={T} key={dept} s={{padding:16,textAlign:"center"}}>
+            <DeptBadge T={T} dept={dept}/>
+            <div style={{fontSize:22,fontWeight:800,color:T.accent,fontFamily:MO,marginTop:8}}>Rs {Math.round(data.value).toLocaleString()}</div>
+            <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginTop:4}}>{data.count} items · {data.lowCount} low</div>
+          </Card>
+        ))}
+      </div>
+      <Card T={T} s={{padding:16}}>
+        <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Items by Value</div>
+        {sorted.filter(i=>i.perUnit).slice(0,20).map((item,idx)=>{
+          const val=Number(item.stock||0)*Number(item.perUnit||0);
+          const pct=totalValue>0?(val/totalValue)*100:0;
+          return(
+            <div key={item.id} style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                <div>
+                  <span style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{item.name}</span>
+                  <span style={{fontSize:10,color:T.muted,fontFamily:MO,marginLeft:8}}>{item.stock} × Rs {item.perUnit}</span>
+                </div>
+                <span style={{fontSize:13,fontWeight:700,color:T.accent,fontFamily:MO}}>Rs {val.toLocaleString()}</span>
+              </div>
+              <div style={{height:4,background:T.border,borderRadius:2,overflow:"hidden"}}>
+                <div style={{height:"100%",background:T.accent,width:`${pct}%`,borderRadius:2}}/>
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+    </div>
+  );
+}
+
 function ReportsTab({T,movements,countHistory}){
   const isMobile=useIsMobile();
   const {filtered:filteredMov,startDate,endDate,setStartDate,setEndDate,clear}=useDateFilter(movements);
@@ -1649,7 +1695,7 @@ function DevicesTab({T,devices,setDevices,loginHistory}){
 }
 
 // ── ROOT APP ──────────────────────────────────────────────────────────────────
-const ALL_TABS=[{key:"out",label:"Stock Out",icon:"↑"},{key:"in",label:"Stock In",icon:"↓"},{key:"inv",label:"Inventory",icon:"📦"},{key:"count",label:"Count",icon:"✏"},{key:"var",label:"Variance",icon:"≠"},{key:"po",label:"Order",icon:"🛒"},{key:"hist",label:"History",icon:"📋"},{key:"reports",label:"Reports",icon:"📈"},{key:"audit",label:"Audit",icon:"🔍"},{key:"users",label:"Users",icon:"👥"},{key:"devices",label:"Devices",icon:"🖥"}];
+const ALL_TABS=[{key:"out",label:"Stock Out",icon:"↑"},{key:"in",label:"Stock In",icon:"↓"},{key:"inv",label:"Inventory",icon:"📦"},{key:"count",label:"Count",icon:"✏"},{key:"var",label:"Variance",icon:"≠"},{key:"po",label:"Order",icon:"🛒"},{key:"hist",label:"History",icon:"📋"},{key:"reports",label:"Reports",icon:"📈"},{key:"audit",label:"Audit",icon:"🔍"},{key:"value",label:"Stock Value",icon:"💰"},{key:"users",label:"Users",icon:"👥"},{key:"devices",label:"Devices",icon:"🖥"}];
 const tabColor=(k,T)=>({out:T.low,in:T.ok,inv:T.blue,count:T.warn,var:T.purple,po:T.accent,hist:T.muted,audit:T.purple,reports:T.blue,users:T.purple,devices:T.ok}[k]||T.muted);
 
 // ── QR CODE COMPONENTS ───────────────────────────────────────────────────────
@@ -3757,70 +3803,170 @@ function useDateFilter(data,dateKey="date"){
   return{filtered,startDate,endDate,setStartDate,setEndDate,clear:()=>{setStartDate("");setEndDate("");}};
 }
 
+// ── DASHBOARD ────────────────────────────────────────────────────────────────
+function Dashboard({T,isMobile,items,movements,grnLog,wastageLog,glassItems,countHistory}){
+  const today=new Date();
+  const todayStr=today.toLocaleDateString("en-GB");
+
+  const lowStock=items.filter(i=>i.stock>0&&i.stock<i.minQty).length;
+  const emptyStock=items.filter(i=>i.stock<=0).length;
+  const totalValue=items.reduce((s,i)=>s+(Number(i.stock||0)*Number(i.perUnit||0)),0);
+
+  const todayMov=movements.filter(m=>m.date?.startsWith(todayStr));
+  const todayOut=todayMov.filter(m=>m.type==="out").length;
+  const todayIn=todayMov.filter(m=>m.type==="in").length;
+
+  const weekAgo=new Date(today);weekAgo.setDate(weekAgo.getDate()-7);
+  const recentWastage=(wastageLog||[]).filter(w=>{
+    const parts=w.date?.split("/")||[];
+    if(parts.length<3) return false;
+    const d=new Date(parts[2].split(",")[0],parts[1]-1,parts[0]);
+    return d>=weekAgo;
+  });
+  const weeklyLoss=recentWastage.reduce((s,w)=>s+(w.loss||0),0);
+
+  const recentGRNs=(grnLog||[]).filter(g=>{
+    const parts=g.date?.split("/")||[];
+    if(parts.length<3) return false;
+    const d=new Date(parts[2].split(",")[0],parts[1]-1,parts[0]);
+    return d>=weekAgo;
+  });
+  const weeklySpend=recentGRNs.reduce((s,g)=>s+(g.total||0),0);
+
+  const glassLow=(glassItems||[]).filter(i=>i.minQty>0&&(i.kitchenQty+i.frontQty)<i.minQty).length;
+  const recentBreakage=recentWastage.filter(w=>w.sourceType==="glass").length;
+
+  const lastCount=countHistory?.[0];
+
+  return(
+    <div style={{marginBottom:24}}>
+      <div style={{fontSize:13,fontWeight:700,color:T.muted,fontFamily:MO,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:12}}>Today's Overview</div>
+
+      {/* Stock alerts row */}
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:10,marginBottom:12}}>
+        {[
+          ["Low Stock",lowStock,T.warn,T.warnBg,"⚠️"],
+          ["Empty",emptyStock,T.low,T.lowBg,"🔴"],
+          ["Glass Low",glassLow,T.accent,T.accentDim,"🥤"],
+          ["Stock Value",`Rs ${Math.round(totalValue/1000)}k`,T.ok,T.okBg,"💰"],
+        ].map(([label,val,color,bg,icon])=>(
+          <div key={label} style={{background:bg,borderRadius:10,padding:"12px 14px",border:`1px solid ${color}22`}}>
+            <div style={{fontSize:18,marginBottom:4}}>{icon}</div>
+            <div style={{fontSize:isMobile?20:24,fontWeight:800,color,fontFamily:MO,lineHeight:1}}>{val}</div>
+            <div style={{fontSize:10,color,fontFamily:MO,marginTop:4,opacity:0.8,textTransform:"uppercase",letterSpacing:"0.06em"}}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Today's activity */}
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:10,marginBottom:12}}>
+        {[
+          ["Today Out",todayOut,T.low,"↑"],
+          ["Today In",todayIn,T.ok,"↓"],
+          ["Week Wastage",`Rs ${weeklyLoss.toLocaleString()}`,T.warn,"🗑"],
+          ["Week GRN Spend",`Rs ${weeklySpend.toLocaleString()}`,T.accent,"📋"],
+        ].map(([label,val,color,icon])=>(
+          <div key={label} style={{background:T.card,borderRadius:10,padding:"12px 14px",border:`1px solid ${T.border}`}}>
+            <div style={{fontSize:16,marginBottom:4}}>{icon}</div>
+            <div style={{fontSize:isMobile?18:22,fontWeight:800,color,fontFamily:MO,lineHeight:1}}>{val}</div>
+            <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginTop:4,textTransform:"uppercase",letterSpacing:"0.06em"}}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Recent activity */}
+      {(movements.length>0||recentGRNs.length>0)&&(
+        <div style={{background:T.card,borderRadius:10,padding:"14px 16px",border:`1px solid ${T.border}`}}>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,fontFamily:MO,letterSpacing:"0.08em",marginBottom:10}}>RECENT ACTIVITY</div>
+          {movements.slice(0,3).map((m,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:i<2?`1px solid ${T.border}`:"none"}}>
+              <div>
+                <span style={{fontSize:11,fontWeight:700,fontFamily:MO,color:m.type==="out"?T.low:T.ok,marginRight:6}}>{m.type==="out"?"↑":"↓"}</span>
+                <span style={{fontSize:12,color:T.text,fontFamily:SE}}>{m.itemName}</span>
+              </div>
+              <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{m.personName} · {m.date?.split(",")[1]||""}</div>
+            </div>
+          ))}
+          {lastCount&&(
+            <div style={{marginTop:8,padding:"6px 0",fontSize:11,color:T.muted,fontFamily:MO}}>
+              Last count: <span style={{color:T.text,fontWeight:600}}>{lastCount.date}</span> by {lastCount.countedBy}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MODULE SELECTOR ──────────────────────────────────────────────────────────
-function ModuleSelector({T,isDark,onToggle,currentUser,onSelect,onLogout}){
+function ModuleSelector({T,isDark,onToggle,currentUser,onSelect,onLogout,items,movements,grnLog,wastageLog,glassItems,countHistory}){
   const isMobile=useIsMobile();
   const modules=[
-    {id:"stores",icon:"🏪",title:"F&B Stores",desc:"Food & beverage inventory, stock in/out, orders and reports",color:"#5c3d2e",light:"#fdf6f0"},
-    {id:"glassware",icon:"🥤",title:"Glassware & Utensils",desc:"Track cups, plates, bowls, cutlery and breakage",color:"#1a5276",light:"#eaf4fb"},
-    {id:"wastage",icon:"🗑️",title:"Wastage",desc:"Record food wastage, expired and spoiled items",color:"#922b21",light:"#fdedec"},
-    {id:"grn",icon:"📋",title:"GRN Scanner",desc:"Scan supplier invoices to automatically receive stock",color:"#1e8449",light:"#eafaf1"},
+    {id:"stores",icon:"🏪",title:"F&B Stores",desc:"Food & beverage inventory, stock in/out, orders and reports",color:"#5c3d2e",light:"#fdf6f0",
+      shortcuts:[{label:"Stock Out",icon:"↑",tab:"out"},{label:"Stock In",icon:"↓",tab:"in"},{label:"Inventory",icon:"📦",tab:"inv"}]},
+    {id:"glassware",icon:"🥤",title:"Glassware & Utensils",desc:"Track cups, plates, bowls, cutlery and breakage",color:"#1a5276",light:"#eaf4fb",
+      shortcuts:[{label:"Breakage",icon:"🔴",tab:"breakage"},{label:"Issue",icon:"📥",tab:"issue"},{label:"Count",icon:"🔢",tab:"count"}]},
+    {id:"wastage",icon:"🗑️",title:"Wastage",desc:"Record food wastage, expired and spoiled items",color:"#922b21",light:"#fdedec",
+      shortcuts:[{label:"Record",icon:"📝",tab:"record"}]},
+    {id:"grn",icon:"📋",title:"GRN Scanner",desc:"Scan supplier invoices to automatically receive stock",color:"#1e8449",light:"#eafaf1",
+      shortcuts:[{label:"New GRN",icon:"📋",tab:"new"}]},
   ];
   const [hovered,setHovered]=useState(null);
   return(
     <div style={{minHeight:"100vh",background:T.bg,fontFamily:SE,transition:"background 0.25s"}}>
       <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
-      <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.6}}`}</style>
+      <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}`}</style>
       <div style={{position:"absolute",inset:0,backgroundImage:`radial-gradient(${T.border} 1px,transparent 0)`,backgroundSize:"28px 28px",opacity:0.4,pointerEvents:"none"}}/>
 
       {/* Header */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 24px",borderBottom:`1px solid ${T.border}`,background:T.navBg,position:"relative",zIndex:2}}>
-        <div style={{display:"flex",alignItems:"center",gap:12}}>
-          <HazelLogo T={T} size={32}/>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 20px",borderBottom:`1px solid ${T.border}`,background:T.navBg,position:"sticky",top:0,zIndex:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <HazelLogo T={T} size={28}/>
           <div>
-            <div style={{fontSize:16,fontWeight:600,color:T.accent,letterSpacing:"0.12em",textTransform:"uppercase",lineHeight:1}}>Hazel</div>
-            <div style={{fontSize:9,color:T.muted,letterSpacing:"0.2em",textTransform:"uppercase"}}>Cafe & Cakery</div>
+            <div style={{fontSize:14,fontWeight:600,color:T.accent,letterSpacing:"0.12em",textTransform:"uppercase",lineHeight:1}}>Hazel</div>
+            <div style={{fontSize:8,color:T.muted,letterSpacing:"0.2em",textTransform:"uppercase"}}>Cafe & Cakery</div>
           </div>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
           <ThemeToggle T={T} isDark={isDark} onToggle={onToggle}/>
-          <div style={{display:"flex",alignItems:"center",gap:8,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px"}}>
-            <RoleBadge T={T} role={currentUser.role}/>
-            <span style={{fontSize:12,color:T.text,fontWeight:600,fontFamily:MO}}>{currentUser.name}</span>
-            <button onClick={onLogout} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:MO,padding:0,marginLeft:4,borderLeft:`1px solid ${T.border}`,paddingLeft:8}}>← Out</button>
-          </div>
+          <UserMenu T={T} user={currentUser} onLogout={onLogout} isMobile={isMobile}/>
         </div>
       </div>
 
       {/* Content */}
-      <div style={{maxWidth:900,margin:"0 auto",padding:isMobile?"24px 16px":"48px 24px",position:"relative",zIndex:1}}>
-        <div style={{textAlign:"center",marginBottom:40,animation:"fadeUp 0.4s ease"}}>
-          <div style={{fontSize:isMobile?24:32,fontWeight:600,color:T.text,marginBottom:8}}>What would you like to manage?</div>
-          <div style={{fontSize:14,color:T.muted,fontFamily:MO}}>Select a module to continue</div>
-        </div>
+      <div style={{maxWidth:960,margin:"0 auto",padding:isMobile?"16px":"24px 24px",position:"relative",zIndex:1}}>
 
-        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16}}>
+        {/* Dashboard */}
+        <Dashboard T={T} isMobile={isMobile} items={items||[]} movements={movements||[]} grnLog={grnLog||[]} wastageLog={wastageLog||[]} glassItems={glassItems||[]} countHistory={countHistory||[]}/>
+
+        <div style={{fontSize:13,fontWeight:700,color:T.muted,fontFamily:MO,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:12}}>Modules</div>
+
+        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:14}}>
           {modules.map((m,i)=>(
-            <div key={m.id}
-              onClick={()=>onSelect(m.id)}
-              onMouseEnter={()=>setHovered(m.id)}
-              onMouseLeave={()=>setHovered(null)}
-              style={{
-                background:hovered===m.id?m.light:T.card,
-                border:`2px solid ${hovered===m.id?m.color:T.border}`,
-                borderRadius:16,
-                padding:"28px 24px",
-                cursor:"pointer",
-                transition:"all 0.2s ease",
-                animation:`fadeUp ${0.4+i*0.08}s ease`,
-                transform:hovered===m.id?"translateY(-3px)":"none",
-                boxShadow:hovered===m.id?`0 8px 24px ${m.color}22`:"none",
-              }}>
-              <div style={{fontSize:36,marginBottom:12}}>{m.icon}</div>
-              <div style={{fontSize:18,fontWeight:600,color:hovered===m.id?m.color:T.text,marginBottom:6,fontFamily:SE}}>{m.title}</div>
-              <div style={{fontSize:12,color:T.muted,fontFamily:MO,lineHeight:1.6}}>{m.desc}</div>
-              <div style={{marginTop:16,display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700,color:hovered===m.id?m.color:T.muted,fontFamily:MO}}>
-                Open module <span style={{fontSize:14}}>→</span>
+            <div key={m.id} style={{background:T.card,border:`1px solid ${hovered===m.id?m.color:T.border}`,borderRadius:14,overflow:"hidden",transition:"all 0.2s",transform:hovered===m.id?"translateY(-2px)":"none",boxShadow:hovered===m.id?`0 6px 20px ${m.color}18`:"none",animation:`fadeUp ${0.3+i*0.07}s ease`}}
+              onMouseEnter={()=>setHovered(m.id)} onMouseLeave={()=>setHovered(null)}>
+              {/* Main card - opens module */}
+              <div onClick={()=>onSelect(m.id)} style={{padding:"18px 20px",cursor:"pointer",borderBottom:`1px solid ${T.border}`}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+                  <span style={{fontSize:26}}>{m.icon}</span>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:700,color:hovered===m.id?m.color:T.text,fontFamily:SE}}>{m.title}</div>
+                    <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginTop:1}}>{m.desc}</div>
+                  </div>
+                  <span style={{marginLeft:"auto",fontSize:16,color:T.muted}}>→</span>
+                </div>
+              </div>
+              {/* Quick action shortcuts */}
+              <div style={{display:"flex",gap:0,background:T.card2}}>
+                {m.shortcuts.map((s,j)=>(
+                  <button key={j} onClick={()=>onSelect(m.id,s.tab)}
+                    style={{flex:1,padding:"8px 4px",border:"none",borderRight:j<m.shortcuts.length-1?`1px solid ${T.border}`:"none",background:"transparent",color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:10,fontWeight:700,textAlign:"center",transition:"all 0.15s"}}
+                    onMouseEnter={e=>{e.currentTarget.style.background=m.light;e.currentTarget.style.color=m.color;}}
+                    onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color=T.muted;}}>
+                    <div style={{fontSize:14,marginBottom:2}}>{s.icon}</div>
+                    <div>{s.label}</div>
+                  </button>
+                ))}
               </div>
             </div>
           ))}
@@ -3854,16 +4000,19 @@ export default function App(){
   const [ready,setReady]=useState(false);
   const [syncDot,setSyncDot]=useState(false);
   const [activeModule,setActiveModule]=useState(null);
+  const [initialTab,setInitialTab]=useState(null);
 
   // Browser back button support
+  const activeModuleRef=useRef(null);
+  useEffect(()=>{activeModuleRef.current=activeModule;},[activeModule]);
   useEffect(()=>{
     const handlePopState=(e)=>{
-      if(activeModule){setActiveModule(null);}
+      if(activeModuleRef.current){setActiveModule(null);}
       else if(currentUser){setCurrentUser(null);setTab("out");setAlertBanner([]);alertedRef.current.clear();}
     };
     window.addEventListener("popstate",handlePopState);
     return()=>window.removeEventListener("popstate",handlePopState);
-  },[activeModule,currentUser]);
+  },[]);
   const [sheetsSyncing,setSheetsSyncing]=useState(false);
   const [sheetsLastSync,setSheetsLastSync]=useState(null);
   const [sheetsError,setSheetsError]=useState(null);
@@ -4014,12 +4163,15 @@ export default function App(){
     setCurrentUser(null);setTab("out");setAlertBanner([]);alertedRef.current.clear();setActiveModule(null);
   };
 
+  // Apply initialTab from quick action
+  useEffect(()=>{if(initialTab&&ready){setTab(initialTab);setInitialTab(null);}},[initialTab,ready]);
+
   if(!ready) return(<div style={{minHeight:"100vh",background:LIGHT.bg,display:"flex",alignItems:"center",justifyContent:"center",color:LIGHT.muted,fontFamily:SE}}><div style={{textAlign:"center"}}><HazelLogo T={LIGHT} size={50}/><div style={{marginTop:12,fontSize:16,letterSpacing:"0.12em",color:LIGHT.muted}}>Loading…</div></div></div>);
   if(!currentUser) return(<><LoginScreen T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} users={users} setUsers={setUsers} onLogin={handleLogin}/><CreatorStamp T={T}/></>);
-  if(!activeModule) return(<ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m)=>{window.history.pushState({module:m},"");setActiveModule(m);}} onLogout={handleLogout}/>);
-  if(activeModule==="glassware") return(<GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}} onLogout={handleLogout} setAuditLog={setAuditLog} auditLog={auditLog}/>);
-  if(activeModule==="wastage") return(<WastageModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}} onLogout={handleLogout} fbItems={items} glassItems={[]} setFbItems={setItems} setGlassItems={()=>{}}/>);
-  if(activeModule==="grn") return(<GRNModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>{window.history.back();setActiveModule(null);}} onLogout={handleLogout} fbItems={items} setFbItems={setItems} glassItems={[]} setGlassItems={()=>{}}/>);
+  if(!activeModule) return(<ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m,tab)=>{setInitialTab(tab||null);setActiveModule(m);}} onLogout={handleLogout} items={items} movements={movements} grnLog={[]} wastageLog={[]} glassItems={[]} countHistory={countHistory}/>);
+  if(activeModule==="glassware") return(<GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} setAuditLog={setAuditLog} auditLog={auditLog}/>);
+  if(activeModule==="wastage") return(<WastageModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} fbItems={items} glassItems={[]} setFbItems={setItems} setGlassItems={()=>{}}/>);
+  if(activeModule==="grn") return(<GRNModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} fbItems={items} setFbItems={setItems} glassItems={[]} setGlassItems={()=>{}}/>);
 
   const role=ROLES[currentUser.role];
   const allowedTabs=ALL_TABS.filter(t=>role.tabs.includes(t.key));
@@ -4034,7 +4186,7 @@ export default function App(){
         <div style={{maxWidth:1440,margin:"0 auto",padding:"0 16px"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,height:50}}>
             <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-              <button onClick={()=>{window.history.back();}} style={{display:"flex",alignItems:"center",gap:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",color:T.muted,fontFamily:MO,fontSize:11,fontWeight:700,flexShrink:0,transition:"all 0.15s"}}
+              <button onClick={()=>setActiveModule(null)} style={{display:"flex",alignItems:"center",gap:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",color:T.muted,fontFamily:MO,fontSize:11,fontWeight:700,flexShrink:0,transition:"all 0.15s"}}
                 onMouseEnter={e=>{e.currentTarget.style.background=T.accentDim;e.currentTarget.style.color=T.accent;e.currentTarget.style.borderColor=T.accent;}}
                 onMouseLeave={e=>{e.currentTarget.style.background=T.card;e.currentTarget.style.color=T.muted;e.currentTarget.style.borderColor=T.border;}}>
                 <span style={{fontSize:14,fontWeight:800}}>‹</span>
@@ -4069,7 +4221,9 @@ export default function App(){
         {safeTab==="reports"&&<ReportsTab T={T} movements={movements} countHistory={countHistory}/>}
         {safeTab==="users"&&<UsersTab T={T} users={users} setUsers={setUsers}/>}
         {safeTab==="devices"&&<DevicesTab T={T} devices={devices} setDevices={setDevices} loginHistory={loginHistory}/>}
-        {safeTab==="audit"&&<AuditLogTab T={T} auditLog={auditLog} isMobile={isMobile}/>}
+        {safeTab==="audit"&&<AuditLogTab T={T} auditLog={auditLog} isMobile={isMobile}/>
+        }
+        {safeTab==="value"&&<StockValueTab T={T} items={items} isMobile={isMobile}/>}
       </div>
       {isMobile&&(<div style={{position:"fixed",bottom:0,left:0,right:0,background:T.navBg,borderTop:`1px solid ${T.navBorder}`,display:"flex",zIndex:100,overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch",scrollSnapType:"x mandatory"}}><style>{`.mobile-tab-scroll::-webkit-scrollbar{display:none}`}</style>{allowedTabs.map(t=>{const c=tabColor(t.key,T);const active=safeTab===t.key;return(<button key={t.key} onClick={()=>setTab(t.key)} style={{flexShrink:0,minWidth:60,padding:"9px 6px 7px",border:"none",background:active?c+"15":"transparent",color:active?c:T.muted,cursor:"pointer",fontFamily:MO,display:"flex",flexDirection:"column",alignItems:"center",gap:2,borderTop:active?`2px solid ${c}`:`2px solid transparent`,scrollSnapAlign:"start",transition:"all 0.15s"}}><span style={{fontSize:16,lineHeight:1}}>{t.icon}</span><span style={{fontSize:8,fontWeight:700,whiteSpace:"nowrap"}}>{t.label}</span></button>);})}</div>)}
       {showAlertSettings&&<AlertSettingsModal T={T} settings={alertSettings} onClose={()=>setShowAlertSettings(false)} onSave={s=>{setAlertSettings(s);setShowAlertSettings(false);}}/> }
