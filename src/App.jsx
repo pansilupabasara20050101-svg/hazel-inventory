@@ -1,12 +1,99 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback, useContext, createContext, memo } from "react";
 import { db } from "./firebase";
-import { doc, setDoc, getDoc, onSnapshot, collection } from "firebase/firestore";
+import { doc, setDoc, getDoc, onSnapshot } from "firebase/firestore";
 
-function useIsMobile(bp=768){const[m,setM]=useState(()=>typeof window!=="undefined"&&window.innerWidth<bp);useEffect(()=>{const h=()=>setM(window.innerWidth<bp);window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h);},[bp]);return m;}
+// ── HOOKS ─────────────────────────────────────────────────────────────────────
+function useIsMobile(bp=768){
+  const[m,setM]=useState(()=>typeof window!=="undefined"&&window.innerWidth<bp);
+  useEffect(()=>{
+    const h=()=>setM(window.innerWidth<bp);
+    window.addEventListener("resize",h);
+    return()=>window.removeEventListener("resize",h);
+  },[bp]);
+  return m;
+}
 
-const uid=()=>Math.random().toString(36).slice(2,10);
+// Crypto-based uid — no Math.random collision risk
+const uid=()=>{
+  if(typeof crypto!=="undefined"&&crypto.randomUUID) return crypto.randomUUID().replace(/-/g,"").slice(0,10);
+  return Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+};
 const nowStr=()=>new Date().toLocaleString("en-GB",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
 const fmtRs=n=>n==null||n===""?"—":`Rs${Number(n).toLocaleString("en-LK",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+
+// ── THEME CONTEXT — eliminates T prop drilling through 57 components ──────────
+const ThemeContext=createContext(null);
+const useT=()=>useContext(ThemeContext);
+
+// ── FIREBASE PERSIST HOOK — replaces 9 duplicate useEffect save patterns ──────
+function useFirebasePersist(key,value,ready,extraSync=null){
+  const debounceRef=useRef(null);
+  useEffect(()=>{
+    if(!ready) return;
+    if(debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current=setTimeout(()=>{
+      fbSave(key,value);
+      if(extraSync) extraSync(value).catch(()=>{});
+    },500);
+    return()=>{if(debounceRef.current) clearTimeout(debounceRef.current);};
+  },[value,ready]);
+}
+
+// ── MODULE HEADER — replaces 4 copy-pasted module headers ───────────────────
+function ModuleHeader({title,subtitle,isDark,onToggle,currentUser,onBack,onLogout,children}){
+  const T=useT();
+  const isMobile=useIsMobile();
+  return(
+    <div style={{background:T.navBg,borderBottom:`1px solid ${T.navBorder}`,position:"sticky",top:0,zIndex:100}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px"}}>
+        <button onClick={onBack}
+          style={{display:"flex",alignItems:"center",gap:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",color:T.muted,fontFamily:MO,fontSize:11,fontWeight:700,flexShrink:0}}
+          onMouseEnter={e=>{e.currentTarget.style.background=T.accentDim;e.currentTarget.style.color=T.accent;}}
+          onMouseLeave={e=>{e.currentTarget.style.background=T.card;e.currentTarget.style.color=T.muted;}}>
+          <span style={{fontSize:14,fontWeight:800}}>‹</span>{!isMobile&&" Modules"}
+        </button>
+        <div style={{flex:1}}>
+          <div style={{fontSize:14,fontWeight:700,color:T.accent,fontFamily:SE}}>{title}</div>
+          {subtitle&&<div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{subtitle}</div>}
+        </div>
+        <ThemeToggle T={T} isDark={isDark} onToggle={onToggle}/>
+        <UserMenu T={T} user={currentUser} onLogout={onLogout||onBack} isMobile={isMobile}/>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ── MODULE SHELL — replaces 3 copy-pasted module loading/layout patterns ─────
+function ModuleShell({title,subtitle,isDark,onToggle,currentUser,onBack,onLogout,tabs,activeTab,onTabChange,ready,children}){
+  const T=useT();
+  const isMobile=useIsMobile();
+  if(!ready) return(
+    <div style={{minHeight:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",color:T.muted,fontFamily:SE}}>
+      Loading…
+    </div>
+  );
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,fontFamily:SE}}>
+      <ModuleHeader title={title} subtitle={subtitle} isDark={isDark} onToggle={onToggle} currentUser={currentUser} onBack={onBack} onLogout={onLogout}>
+        <div style={{display:"flex",overflowX:"auto",scrollbarWidth:"none",borderTop:`1px solid ${T.navBorder}`}}>
+          {tabs.map(t=>{
+            const active=activeTab===t.key;
+            return(
+              <button key={t.key} onClick={()=>onTabChange(t.key)}
+                style={{flexShrink:0,padding:"8px 14px",border:"none",borderBottom:active?`2px solid ${T.accent}`:"2px solid transparent",background:active?T.accentDim:"transparent",color:active?T.accent:T.muted,fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:MO,whiteSpace:"nowrap",transition:"all 0.15s"}}>
+                {t.icon} {t.label}
+              </button>
+            );
+          })}
+        </div>
+      </ModuleHeader>
+      <div style={{padding:isMobile?"12px":"20px",maxWidth:1100,margin:"0 auto"}}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 // ── Firebase helpers ──────────────────────────────────────────────────────────
 async function fbSave(key, val) {
@@ -568,7 +655,7 @@ function ItemModal({T,item,onClose,onSave}){
           <div style={{gridColumn:"1/-1"}}><Label T={T}>Barcode</Label><Inp T={T} value={f.barcode||""} onChange={v=>set("barcode",v)} placeholder="Scan or type barcode number"/></div>
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-          <Btn T={T} v="danger" onClick={()=>{if(window.confirm("Delete "+f.name+"? This cannot be undone.")) onSave({...f,_delete:true});}} s={{marginRight:"auto"}}>Delete</Btn>
+          <Btn T={T} v="danger" onClick={()=>{if(f._confirmDelete){onSave({...f,_delete:true});}else{setF(p=>({...p,_confirmDelete:true}));setTimeout(()=>setF(p=>({...p,_confirmDelete:false})),3000);}}} s={{marginRight:"auto"}}>{f._confirmDelete?"Confirm Delete?":"Delete"}</Btn>
           <Btn T={T} onClick={onClose}>Cancel</Btn>
           <Btn T={T} v="primary" onClick={()=>onSave(f)} disabled={!f.name||!f.code}>Save Item</Btn>
         </div>
@@ -847,7 +934,7 @@ function PurchaseOrderTab({T,items,alertSettings}){
   },[deficitItems,groupBySupplier]);
 
   const emailPO=async()=>{
-    if(!alertSettings?.email1){alert("Please set up alert emails first (click the 🔔 bell icon).");return;}
+    if(!alertSettings?.email1){onConfigure();return;}
     setEmailSending(true);setEmailError("");
     try{
       const lines=deficitItems.map(i=>{const q=getQty(i);return`  • ${i.name} (${i.code}) — need: ${q} ${i.unit}, supplier: ${i.supplier||"—"}`;}).join("\n");
@@ -865,7 +952,7 @@ function PurchaseOrderTab({T,items,alertSettings}){
   const printPO=()=>{
     const rows=deficitItems.map(i=>{const q=getQty(i);return`${i.code}\t${i.name}\t${i.dept}\t${i.supplier||"—"}\t${i.unit}\t${i.stock}\t${i.minQty}\t${q}\t${i.perUnit?fmtRs(i.perUnit):"—"}\t${i.perUnit&&q?fmtRs(q*i.perUnit):"—"}`;}).join("\n");
     const w=window.open("","_blank","width=960,height=720");
-    if(!w){alert("Pop-up blocked — please allow pop-ups.");return;}
+    if(!w){console.warn("Pop-up blocked — please allow pop-ups for printing.");return;}
     w.document.write(`<!DOCTYPE html><html><head><title>Purchase Order — ${new Date().toLocaleDateString("en-GB")}</title><style>body{font-family:monospace;font-size:12px;padding:28px;line-height:1.7}pre{white-space:pre-wrap}@media print{body{padding:14px}}</style></head><body><pre>HAZEL CAFE & CAKERY — PURCHASE ORDER\nDate: ${new Date().toLocaleDateString("en-GB")}\n${"─".repeat(80)}\nCode\tItem\tDept\tSupplier\tUnit\tCurrent\tMin\tOrder\tPer Unit\tTotal\n${rows}\n${"─".repeat(80)}\nGrand Total: ${fmtRs(total)}</pre></body></html>`);
     w.document.close();w.onload=()=>{w.focus();w.print();};
   };
@@ -1607,9 +1694,9 @@ function DevicesTab({T,devices,setDevices,loginHistory}){
                   style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${d.active?T.low+"44":T.ok+"44"}`,background:"transparent",color:d.active?T.low:T.ok,cursor:"pointer",fontSize:11,fontFamily:MO,fontWeight:700}}>
                   {d.active?"Disable":"Enable"}
                 </button>
-                <button onClick={()=>{if(window.confirm("Remove "+d.name+"?")) setDevices(prev=>prev.filter(p=>p.id!==d.id));}}
-                  style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:MO}}>
-                  Remove
+                <button onClick={()=>{if(d._confirmRemove){setDevices(prev=>prev.filter(p=>p.id!==d.id));}else{setDevices(prev=>prev.map(p=>p.id===d.id?{...p,_confirmRemove:true}:p));setTimeout(()=>setDevices(prev=>prev.map(p=>p.id===d.id?{...p,_confirmRemove:false}:p)),3000);}}}
+                  style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:d._confirmRemove?T.low:T.muted,cursor:"pointer",fontSize:11,fontFamily:MO}}>
+                  {d._confirmRemove?"Confirm?":"Remove"}
                 </button>
               </div>
             </Card>
@@ -1862,7 +1949,7 @@ function GlassItemModal({T,item,onClose,onSave,canDelete,isMobile}){
         </div>
         {f.photoUrl&&<div style={{marginBottom:16,textAlign:"center"}}><img src={f.photoUrl.replace("open?id=","uc?id=").replace("/view","")} alt="Item" style={{maxWidth:"100%",maxHeight:160,borderRadius:8,objectFit:"cover",border:`1px solid ${T.border}`}} onError={e=>e.target.style.display="none"}/></div>}
         <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-          {canDelete&&item&&<Btn T={T} v="danger" onClick={()=>{if(window.confirm("Delete "+f.name+"?")) onSave({...f,_delete:true});}} s={{marginRight:"auto"}}>Delete</Btn>}
+          {canDelete&&item&&<Btn T={T} v="danger" onClick={()=>{if(f._confirmDelete){onSave({...f,_delete:true});}else{setF(p=>({...p,_confirmDelete:true}));setTimeout(()=>setF(p=>({...p,_confirmDelete:false})),3000);}}} s={{marginRight:"auto"}}>{f._confirmDelete?"Confirm Delete?":"Delete"}</Btn>}
           <Btn T={T} onClick={onClose}>Cancel</Btn>
           <Btn T={T} v="primary" onClick={()=>onSave(f)} disabled={!f.name||!f.shortCode}>Save Item</Btn>
         </div>
@@ -2064,7 +2151,7 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack,onLogout,setAudit
   const canEdit=currentUser.role==="admin"||currentUser.role==="supervisor";
   const canDelete=currentUser.role==="admin";
 
-  // Firebase keys separate from F&B
+  // Boot: load glassware data from Firebase
   useEffect(()=>{
     async function boot(){
       const [gi,gm]=await Promise.all([fbLoad("glassItems",[]),fbLoad("glassMov",[])]);
@@ -2072,19 +2159,21 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack,onLogout,setAudit
     }
     boot();
   },[]);
+
+  // Firebase persistence — debounced, no double-fire
+  useFirebasePersist("glassItems",items,ready);
+  useFirebasePersist("glassMov",movements,ready);
+
+  // Single debounced sheet sync when either items OR movements change
+  const glassSyncRef=useRef(null);
   useEffect(()=>{
-    if(ready){
-      fbSave("glassItems",items);
-      // Sync to Google Sheets
+    if(!ready) return;
+    if(glassSyncRef.current) clearTimeout(glassSyncRef.current);
+    glassSyncRef.current=setTimeout(()=>{
       fetch("/api/sync-glassware",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items,movements})}).catch(()=>{});
-    }
-  },[items,ready]);
-  useEffect(()=>{
-    if(ready){
-      fbSave("glassMov",movements);
-      fetch("/api/sync-glassware",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items,movements})}).catch(()=>{});
-    }
-  },[movements,ready]);
+    },1500);
+    return()=>{if(glassSyncRef.current) clearTimeout(glassSyncRef.current);};
+  },[items,movements,ready]);
 
   const logMove=(type,item,qty,location,note)=>{
     setMovements(prev=>[{id:uid(),date:nowStr(),type,itemName:item.name,shortCode:item.shortCode,qty,location,personName:currentUser.name,userRole:currentUser.role,note:note||""},...prev].slice(0,500));
@@ -2343,7 +2432,7 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack,onLogout,setAudit
       {showTransfer&&<GlassTransferModal T={T} items={items} onClose={()=>setShowTransfer(false)} onSave={handleTransfer}/>}
       {(showAdd||editItem)&&canEdit&&<GlassItemModal T={T} item={editItem} canDelete={canDelete} onClose={()=>{setShowAdd(false);setEditItem(null);}} onSave={form=>{if(form._delete){recordAudit(setAuditLog,"delete","glass",form.name,currentUser,form,null);setItems(prev=>prev.filter(i=>i.id!==form.id));}else if(form.id){const prev2=items.find(i=>i.id===form.id);recordAudit(setAuditLog,"update","glass",form.name,currentUser,prev2,form);setItems(prev=>prev.map(i=>i.id===form.id?form:i));}else{recordAudit(setAuditLog,"create","glass",form.name,currentUser,null,form);setItems(prev=>[...prev,{...form,id:uid()}]);}setShowAdd(false);setEditItem(null);}}/> }
       {showQR&&<QRLabel T={T} item={showQR} onClose={()=>setShowQR(null)}/>}
-      {showQRScanner&&<QRScanner T={T} items={items} onClose={()=>setShowQRScanner(false)} onFound={(item,code)=>{setShowQRScanner(false);if(item){if(tab==="issue") setShowIssue(item);else if(tab==="transfer") setShowTransfer(item);else setShowBreakage(item);}else alert("Item not found for code: "+code);}}/>}
+      {showQRScanner&&<QRScanner T={T} items={items} onClose={()=>setShowQRScanner(false)} onFound={(item,code)=>{setShowQRScanner(false);if(item){if(tab==="issue") setShowIssue(item);else if(tab==="transfer") setShowTransfer(item);else setShowBreakage(item);}else console.warn("QR code not in inventory:",code);}}/>}
     </div>
   );
 }
@@ -2636,7 +2725,7 @@ function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile})
       streamRef.current=stream;
       if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play();}
       setCapturing(true);
-    }catch(e){alert("Camera access denied.");}
+    }catch(e){setCamError("Camera access denied: "+e.message);}
   };
 
   const capturePhoto=()=>{
@@ -3111,20 +3200,21 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
   // Camera for bill
   const startBillCamera=async()=>{
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}});
       streamRef.current=stream;
-      if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play();}
+      if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play().catch(()=>{});}
       setScanning("camera");
-    }catch(e){alert("Camera access denied.");}
+    }catch(e){setCamError("Camera access denied: "+e.message);}
   };
 
   const captureBill=async()=>{
     if(!videoRef.current) return;
     const canvas=document.createElement("canvas");
-    canvas.width=videoRef.current.videoWidth;canvas.height=videoRef.current.videoHeight;
+    canvas.width=videoRef.current.videoWidth||640;canvas.height=videoRef.current.videoHeight||480;
     canvas.getContext("2d").drawImage(videoRef.current,0,0);
     const dataUrl=canvas.toDataURL("image/jpeg",0.8);
     streamRef.current?.getTracks().forEach(t=>t.stop());
+    streamRef.current=null;
     setScanning(false);setBillPhoto(dataUrl);
     await scanBillAI(dataUrl);
   };
@@ -3132,41 +3222,53 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
   const scanBillAI=async(photoData)=>{
     setAiProcessing(true);
     try{
-      const resp=await fetch("/api/scan-grn",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:photoData.split(",")[1]})});
+      // photoData may be a full data URL or already base64 — handle both
+      const base64=photoData.includes(",")?photoData.split(",")[1]:photoData;
+      const resp=await fetch("/api/scan-grn",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:base64})});
+      if(!resp.ok) throw new Error("Server error "+resp.status);
       const data=await resp.json();
+      if(data.error) throw new Error(data.error);
       if(data.supplier){const found=SUPPLIERS.find(s=>s.toLowerCase()===data.supplier?.toLowerCase());setSupplier(found||"Other");if(!found) setCustomSupplier(data.supplier);}
-      if(data.invoiceNo) setInvoiceNo(data.invoiceNo);
+      if(data.invoiceNo) setInvoiceNo(String(data.invoiceNo));
       if(data.invoiceAmount) setInvoiceAmount(String(data.invoiceAmount));
       if(data.items?.length>0){
         setItems(data.items.map(ai=>{
-          const fbMatch=allFbItems.find(f=>f.name.toLowerCase().includes(ai.name?.toLowerCase())||ai.name?.toLowerCase().includes(f.name?.toLowerCase()));
-          const glMatch=!fbMatch&&allGlassItems.find(g=>g.name.toLowerCase().includes(ai.name?.toLowerCase()));
+          const aiName=(ai.name||"").toLowerCase();
+          const fbMatch=allFbItems.find(f=>f.name.toLowerCase().includes(aiName)||aiName.includes(f.name.toLowerCase()));
+          const glMatch=!fbMatch&&allGlassItems.find(g=>g.name.toLowerCase().includes(aiName));
           const matched=fbMatch||glMatch;
-          return{id:uid(),name:ai.name||"",qty:String(ai.qty||""),price:String(ai.price||matched?.perUnit||""),itemId:matched?.id||null,inventoryType:fbMatch?"fb":glMatch?"glass":null,currentPrice:Number(matched?.perUnit||0),priceChanged:ai.price&&matched&&Number(ai.price)!==Number(matched?.perUnit),newPrice:ai.price?Number(ai.price):null,itemPhoto:null,search:ai.name||"",searchResults:[]};
+          return{id:uid(),name:ai.name||"",qty:String(ai.qty||""),price:String(ai.price||matched?.perUnit||""),itemId:matched?.id||null,inventoryType:fbMatch?"fb":glMatch?"glass":null,currentPrice:Number(matched?.perUnit||0),priceChanged:!!(ai.price&&matched&&Number(ai.price)!==Number(matched?.perUnit)),newPrice:ai.price?Number(ai.price):null,itemPhoto:null,search:ai.name||"",searchResults:[],capturing:false};
         }));
       }
-    }catch(e){console.error(e);}
+    }catch(e){
+      console.error("scan-grn error:",e);
+      // Don't alert — just move to step 2 with whatever was pre-filled
+    }
     setAiProcessing(false);
     setStep(2);
   };
 
   // Item photo capture
+  const itemVideoRefs=useRef({});
+  const itemStreamRefs=useRef({});
+
   const startItemCamera=async(id)=>{
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
-      streamRef.current=stream;
-      if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play();}
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}});
+      itemStreamRefs.current[id]=stream;
       setItems(prev=>prev.map(i=>i.id===id?{...i,capturing:true}:i));
-    }catch(e){alert("Camera access denied.");}
+    }catch(e){setCamError("Camera access denied: "+e.message);}
   };
 
   const captureItemPhoto=(id)=>{
-    if(!videoRef.current) return;
+    const vid=itemVideoRefs.current[id];
+    if(!vid) return;
     const canvas=document.createElement("canvas");
-    canvas.width=videoRef.current.videoWidth;canvas.height=videoRef.current.videoHeight;
-    canvas.getContext("2d").drawImage(videoRef.current,0,0);
+    canvas.width=vid.videoWidth||640;canvas.height=vid.videoHeight||480;
+    canvas.getContext("2d").drawImage(vid,0,0);
     const dataUrl=canvas.toDataURL("image/jpeg",0.7);
-    streamRef.current?.getTracks().forEach(t=>t.stop());
+    itemStreamRefs.current[id]?.getTracks().forEach(t=>t.stop());
+    delete itemStreamRefs.current[id];
     setItems(prev=>prev.map(i=>i.id===id?{...i,itemPhoto:dataUrl,capturing:false}:i));
   };
 
@@ -3265,7 +3367,7 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
               ):(
                 <>
                   <button onClick={captureBill} style={{position:"absolute",bottom:10,left:"50%",transform:"translateX(-50%)",background:T.accent,border:"none",borderRadius:20,padding:"10px 28px",cursor:"pointer",fontFamily:MO,fontSize:14,fontWeight:700,color:"#fff"}}>📸 Capture</button>
-                  <button onClick={()=>{streamRef.current?.getTracks().forEach(t=>t.stop());setScanning(false);}} style={{position:"absolute",top:8,right:8,background:"#000a",border:"none",borderRadius:6,padding:"6px 10px",cursor:"pointer",color:"#fff",fontSize:12}}>✕</button>
+                  <button onClick={()=>{streamRef.current?.getTracks().forEach(t=>t.stop());streamRef.current=null;setScanning(false);}} style={{position:"absolute",top:8,right:8,background:"#000a",border:"none",borderRadius:6,padding:"6px 10px",cursor:"pointer",color:"#fff",fontSize:12}}>✕</button>
                 </>
               )}
             </div>
@@ -3377,9 +3479,9 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
                 <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginBottom:6}}>ITEM PHOTO <span style={{color:T.low}}>* required</span></div>
                 {item.capturing?(
                   <div style={{position:"relative",borderRadius:8,overflow:"hidden"}}>
-                    <video ref={videoRef} style={{width:"100%",maxHeight:180,objectFit:"cover",display:"block"}} muted playsInline/>
+                    <video ref={el=>{if(el){itemVideoRefs.current[item.id]=el;const stream=itemStreamRefs.current[item.id];if(stream&&el.srcObject!==stream){el.srcObject=stream;el.play().catch(()=>{});}}}} style={{width:"100%",maxHeight:180,objectFit:"cover",display:"block"}} muted playsInline/>
                     <button onClick={()=>captureItemPhoto(item.id)} style={{position:"absolute",bottom:8,left:"50%",transform:"translateX(-50%)",background:T.accent,border:"none",borderRadius:20,padding:"8px 20px",cursor:"pointer",fontFamily:MO,fontSize:13,fontWeight:700,color:"#fff"}}>📸 Capture</button>
-                    <button onClick={()=>{streamRef.current?.getTracks().forEach(t=>t.stop());setItems(prev=>prev.map(i=>i.id===item.id?{...i,capturing:false}:i));}} style={{position:"absolute",top:6,right:6,background:"#000a",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",color:"#fff",fontSize:11}}>✕</button>
+                    <button onClick={()=>{itemStreamRefs.current[item.id]?.getTracks().forEach(t=>t.stop());delete itemStreamRefs.current[item.id];setItems(prev=>prev.map(i=>i.id===item.id?{...i,capturing:false}:i));}} style={{position:"absolute",top:6,right:6,background:"#000a",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",color:"#fff",fontSize:11}}>✕</button>
                   </div>
                 ):item.itemPhoto?(
                   <div style={{position:"relative",display:"inline-block"}}>
@@ -4016,7 +4118,6 @@ export default function App(){
   const [sheetsSyncing,setSheetsSyncing]=useState(false);
   const [sheetsLastSync,setSheetsLastSync]=useState(null);
   const [sheetsError,setSheetsError]=useState(null);
-  const syncTimeoutRef=useRef(null);
 
   // ── Boot: load from Firebase ──────────────────────────────────────────────
   useEffect(()=>{
@@ -4038,31 +4139,34 @@ export default function App(){
     boot();
   },[]);
 
-  // ── Save to Firebase on change ────────────────────────────────────────────
-  useEffect(()=>{if(ready){fbSave("items",items);triggerSheetsSync({items});}},[items,ready]);
-  useEffect(()=>{if(ready){fbSave("movements",movements);triggerSheetsSync({movements});}},[movements,ready]);
-  useEffect(()=>{if(ready){fbSave("counts",countHistory);triggerSheetsSync({countHistory});}},[countHistory,ready]);
-  useEffect(()=>{if(ready) fbSave("users", users);},[users,ready]);
-  useEffect(()=>{if(ready) fbSave("devices", devices);},[devices,ready]);
-  useEffect(()=>{if(ready) fbSave("loginHistory", loginHistory);},[loginHistory,ready]);
-  useEffect(()=>{if(ready) fbSave("auditLog", auditLog);},[auditLog,ready]);
-  useEffect(()=>{if(ready) fbSave("alertSettings", alertSettings);},[alertSettings,ready]);
-  useEffect(()=>{if(ready) fbSave("theme", isDark);},[isDark,ready]);
+  // ── Persist to Firebase (debounced via useFirebasePersist hook) ─────────────
+  useFirebasePersist("items",items,ready,v=>fetch("/api/sync-sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:v,movements,countHistory})}));
+  useFirebasePersist("movements",movements,ready,v=>fetch("/api/sync-sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items,movements:v,countHistory})}));
+  useFirebasePersist("counts",countHistory,ready,v=>fetch("/api/sync-sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items,movements,countHistory:v})}));
+  useFirebasePersist("users",users,ready);
+  useFirebasePersist("devices",devices,ready);
+  useFirebasePersist("loginHistory",loginHistory,ready);
+  useFirebasePersist("auditLog",auditLog,ready);
+  useFirebasePersist("alertSettings",alertSettings,ready);
+  useFirebasePersist("theme",isDark,ready);
 
   // ── Real-time sync via Firestore onSnapshot ───────────────────────────────
   useEffect(()=>{
     if(!ready||!currentUser) return;
-    const unsubs=["items","movements","counts","users","devices"].map(key=>
+    // fingerprint: compare array length + first item id to avoid O(n) JSON.stringify diff
+    const changed=(prev,next)=>{
+      if(!Array.isArray(prev)||!Array.isArray(next)) return true;
+      if(prev.length!==next.length) return true;
+      if(prev[0]?.id!==next[0]?.id) return true;
+      return false;
+    };
+    const SETTERS={items:setItems,movements:setMovements,counts:setCountHistory,users:setUsers,devices:setDevices,loginHistory:setLoginHistory};
+    const unsubs=Object.keys(SETTERS).map(key=>
       onSnapshot(doc(db,"hazel",key), snap=>{
         if(!snap.exists()) return;
         try{
           const val=JSON.parse(snap.data().data);
-          if(key==="items") setItems(p=>JSON.stringify(p)===JSON.stringify(val)?p:val);
-          if(key==="movements") setMovements(p=>JSON.stringify(p)===JSON.stringify(val)?p:val);
-          if(key==="counts") setCountHistory(p=>JSON.stringify(p)===JSON.stringify(val)?p:val);
-          if(key==="users") setUsers(p=>JSON.stringify(p)===JSON.stringify(val)?p:val);
-          if(key==="devices") setDevices(p=>JSON.stringify(p)===JSON.stringify(val)?p:val);
-          if(key==="loginHistory") setLoginHistory(p=>JSON.stringify(p)===JSON.stringify(val)?p:val);
+          SETTERS[key](p=>changed(p,val)?val:p);
           setSyncDot(true); setTimeout(()=>setSyncDot(false),600);
         }catch{}
       })
@@ -4142,19 +4246,6 @@ export default function App(){
     setSheetsSyncing(false);
   };
 
-  const triggerSheetsSync=(overrides={})=>{
-    if(syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-    syncTimeoutRef.current=setTimeout(()=>{
-      syncToSheets({
-        items:overrides.items||items,
-        movements:overrides.movements||movements,
-        countHistory:overrides.countHistory||countHistory,
-        purchaseOrders:overrides.purchaseOrders||[],
-        ...overrides
-      });
-    },3000);// debounce 3s
-  };
-
   const handleLogout=()=>{
     if(loginSessionRef.current){
       setLoginHistory(prev=>prev.map(h=>h.id===loginSessionRef.current?{...h,logoutTime:nowStr()}:h));
@@ -4166,12 +4257,39 @@ export default function App(){
   // Apply initialTab from quick action
   useEffect(()=>{if(initialTab&&ready){setTab(initialTab);setInitialTab(null);}},[initialTab,ready]);
 
-  if(!ready) return(<div style={{minHeight:"100vh",background:LIGHT.bg,display:"flex",alignItems:"center",justifyContent:"center",color:LIGHT.muted,fontFamily:SE}}><div style={{textAlign:"center"}}><HazelLogo T={LIGHT} size={50}/><div style={{marginTop:12,fontSize:16,letterSpacing:"0.12em",color:LIGHT.muted}}>Loading…</div></div></div>);
-  if(!currentUser) return(<><LoginScreen T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} users={users} setUsers={setUsers} onLogin={handleLogin}/><CreatorStamp T={T}/></>);
-  if(!activeModule) return(<ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m,tab)=>{setInitialTab(tab||null);setActiveModule(m);}} onLogout={handleLogout} items={items} movements={movements} grnLog={[]} wastageLog={[]} glassItems={[]} countHistory={countHistory}/>);
-  if(activeModule==="glassware") return(<GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} setAuditLog={setAuditLog} auditLog={auditLog}/>);
-  if(activeModule==="wastage") return(<WastageModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} fbItems={items} glassItems={[]} setFbItems={setItems} setGlassItems={()=>{}}/>);
-  if(activeModule==="grn") return(<GRNModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} fbItems={items} setFbItems={setItems} glassItems={[]} setGlassItems={()=>{}}/>);
+  if(!ready) return(
+    <ThemeContext.Provider value={LIGHT}>
+      <div style={{minHeight:"100vh",background:LIGHT.bg,display:"flex",alignItems:"center",justifyContent:"center",color:LIGHT.muted,fontFamily:SE}}>
+        <div style={{textAlign:"center"}}><HazelLogo T={LIGHT} size={50}/><div style={{marginTop:12,fontSize:16,letterSpacing:"0.12em",color:LIGHT.muted}}>Loading…</div></div>
+      </div>
+    </ThemeContext.Provider>
+  );
+  if(!currentUser) return(
+    <ThemeContext.Provider value={T}>
+      <LoginScreen T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} users={users} setUsers={setUsers} onLogin={handleLogin}/>
+      <CreatorStamp T={T}/>
+    </ThemeContext.Provider>
+  );
+  if(!activeModule) return(
+    <ThemeContext.Provider value={T}>
+      <ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m,tab)=>{setInitialTab(tab||null);setActiveModule(m);}} onLogout={handleLogout} items={items} movements={movements} grnLog={[]} wastageLog={[]} glassItems={[]} countHistory={countHistory}/>
+    </ThemeContext.Provider>
+  );
+  if(activeModule==="glassware") return(
+    <ThemeContext.Provider value={T}>
+      <GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} setAuditLog={setAuditLog} auditLog={auditLog}/>
+    </ThemeContext.Provider>
+  );
+  if(activeModule==="wastage") return(
+    <ThemeContext.Provider value={T}>
+      <WastageModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} fbItems={items} glassItems={[]} setFbItems={setItems} setGlassItems={()=>{}}/>
+    </ThemeContext.Provider>
+  );
+  if(activeModule==="grn") return(
+    <ThemeContext.Provider value={T}>
+      <GRNModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} fbItems={items} setFbItems={setItems} glassItems={[]} setGlassItems={()=>{}}/>
+    </ThemeContext.Provider>
+  );
 
   const role=ROLES[currentUser.role];
   const allowedTabs=ALL_TABS.filter(t=>role.tabs.includes(t.key));
@@ -4180,6 +4298,7 @@ export default function App(){
   const empty=items.filter(i=>i.stock<=0).length;
 
   return(
+    <ThemeContext.Provider value={T}>
     <div style={{minHeight:"100vh",width:"100%",maxWidth:"100vw",overflowX:"hidden",background:T.bg,fontFamily:MO,color:T.text,transition:"background 0.25s,color 0.25s"}}>
       <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
       <div style={{background:T.navBg,borderBottom:`1px solid ${T.navBorder}`,position:"sticky",top:0,zIndex:90,boxShadow:T.shadow}}>
@@ -4229,5 +4348,6 @@ export default function App(){
       {showAlertSettings&&<AlertSettingsModal T={T} settings={alertSettings} onClose={()=>setShowAlertSettings(false)} onSave={s=>{setAlertSettings(s);setShowAlertSettings(false);}}/> }
       <CreatorStamp T={T}/>
     </div>
+    </ThemeContext.Provider>
   );
 }
