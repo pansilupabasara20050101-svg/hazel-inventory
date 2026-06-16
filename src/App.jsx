@@ -26,17 +26,24 @@ const ThemeContext=createContext(null);
 const useT=()=>useContext(ThemeContext);
 
 // ── FIREBASE PERSIST HOOK — replaces 9 duplicate useEffect save patterns ──────
+// extraSync is stored in a ref so it always sees the latest closure values
+// without being listed as a dep (avoids infinite loop from inline arrow fns)
 function useFirebasePersist(key,value,ready,extraSync=null){
   const debounceRef=useRef(null);
+  const extraSyncRef=useRef(extraSync);
+  // Keep ref current on every render so the debounce callback always
+  // closes over the freshest extraSync (which itself closes over fresh state)
+  useEffect(()=>{extraSyncRef.current=extraSync;},[extraSync]);
+
   useEffect(()=>{
     if(!ready) return;
     if(debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current=setTimeout(()=>{
       fbSave(key,value);
-      if(extraSync) extraSync(value).catch(()=>{});
+      if(extraSyncRef.current) extraSyncRef.current(value).catch(()=>{});
     },500);
     return()=>{if(debounceRef.current) clearTimeout(debounceRef.current);};
-  },[value,ready]);
+  },[value,ready,key]);
 }
 
 // ── MODULE HEADER — replaces 4 copy-pasted module headers ───────────────────
@@ -246,19 +253,37 @@ function PinUnlock({T,storedUser,onSuccess,onUsePassword}){
   const [error,setError]=useState("");
   const [shake,setShake]=useState(false);
   const savedPin=localStorage.getItem("pin_"+storedUser.id);
+  // Store callbacks in refs so useEffect(,[]) can safely call them
+  // without going stale — onSuccess identity changes every render of parent
+  const onSuccessRef=useRef(onSuccess);
+  useEffect(()=>{onSuccessRef.current=onSuccess;},[onSuccess]);
+
+  useEffect(()=>{
+    if(!window.PublicKeyCredential) return;
+    if(localStorage.getItem("bio_"+storedUser.id)!=="1") return;
+    let cancelled=false;
+    (async()=>{
+      try{
+        const challenge=new Uint8Array(32);crypto.getRandomValues(challenge);
+        await navigator.credentials.get({publicKey:{challenge,timeout:60000,userVerification:"required",rpId:window.location.hostname}});
+        if(!cancelled) onSuccessRef.current(storedUser);
+      }catch(e){
+        if(!cancelled) setError("Biometric failed. Use PIN or password.");
+      }
+    })();
+    return()=>{cancelled=true;};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[storedUser.id]);// only re-run if the user changes, not on every render
 
   const tryBiometric=async()=>{
+    setError("");
     try{
       if(!window.PublicKeyCredential) return;
       const challenge=new Uint8Array(32);crypto.getRandomValues(challenge);
       await navigator.credentials.get({publicKey:{challenge,timeout:60000,userVerification:"required",rpId:window.location.hostname}});
-      onSuccess(storedUser);
+      onSuccessRef.current(storedUser);
     }catch(e){setError("Biometric failed. Use PIN or password.");}
   };
-
-  useEffect(()=>{
-    if(window.PublicKeyCredential&&localStorage.getItem("bio_"+storedUser.id)==="1") tryBiometric();
-  },[]);
 
   const tap=(d)=>{
     if(d==="del"){setPin(p=>p.slice(0,-1));setError("");return;}
@@ -333,7 +358,7 @@ function PinSetupModal({T,user,onClose,onSave}){
     }
   };
 
-  // Keyboard support for PIN setup
+  // Single keyboard handler — dep array covers all state that tap() reads
   useEffect(()=>{
     const handler=(e)=>{
       if(e.key>="0"&&e.key<="9") tap(e.key);
@@ -342,15 +367,6 @@ function PinSetupModal({T,user,onClose,onSave}){
     window.addEventListener("keydown",handler);
     return()=>window.removeEventListener("keydown",handler);
   },[step,pin1,pin2]);
-
-  useEffect(()=>{
-    const handler=(e)=>{
-      if(e.key>="0"&&e.key<="9") tap(e.key);
-      else if(e.key==="Backspace") tap("del");
-    };
-    window.addEventListener("keydown",handler);
-    return()=>window.removeEventListener("keydown",handler);
-  },[pin1,pin2,step]);
 
   const setupBiometric=async()=>{
     try{
@@ -509,14 +525,15 @@ function MovementTab({T,type,items,movements,setMovements,setItems,currentUser})
   const [note,setNote]=useState("");
   const [success,setSuccess]=useState(null);
   const [confirmOverdraw,setConfirmOverdraw]=useState(false);
-  const [undoTimer,setUndoTimer]=useState(null);
+  // useRef not useState — timer ID never needs to trigger a re-render
+  const undoTimerRef=useRef(null);
   const [lastMov,setLastMov]=useState(null);
   const [showCam,setShowCam]=useState(false);
   const [showAI,setShowAI]=useState(false);
   const isMobile=useIsMobile();
   const isOut=type==="out";
 
-  useEffect(()=>()=>{if(undoTimer) clearTimeout(undoTimer);},[undoTimer]);
+  useEffect(()=>()=>{if(undoTimerRef.current) clearTimeout(undoTimerRef.current);},[]);
 
   const doPost=(forceNegative=false)=>{
     if(!selected||!qty||Number(qty)<=0) return;
@@ -525,18 +542,18 @@ function MovementTab({T,type,items,movements,setMovements,setItems,currentUser})
     if(isOut&&newStock<0&&!forceNegative){setConfirmOverdraw(true);return;}
     setConfirmOverdraw(false);
     const mov={id:uid(),type,timestamp:nowStr(),personName:currentUser.name,userId:currentUser.id,userRole:currentUser.role,dept:selected.dept,code:selected.code,itemName:selected.name,qty:n,prevStock:selected.stock,newStock,note:note.trim()||null};
-    setMovements(prev=>{if(prev.find(m=>m.id===mov.id)) return prev;return [mov,...prev];});
+    setMovements(prev=>[mov,...prev]);
     setItems(prev=>prev.map(i=>i.id===selected.id?{...i,stock:newStock}:i));
     setLastMov(mov);setSuccess({...mov});setSelected(null);setQty("");setSearch("");setNote("");
-    if(undoTimer) clearTimeout(undoTimer);
-    const t=setTimeout(()=>{setLastMov(null);setSuccess(null);},60000);setUndoTimer(t);
+    if(undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current=setTimeout(()=>{setLastMov(null);setSuccess(null);},60000);
   };
 
   const doUndo=()=>{
     if(!lastMov) return;
     setItems(prev=>prev.map(i=>i.code===lastMov.code?{...i,stock:lastMov.prevStock}:i));
     setMovements(prev=>prev.filter(m=>m.id!==lastMov.id));
-    setLastMov(null);setSuccess(null);if(undoTimer) clearTimeout(undoTimer);
+    setLastMov(null);setSuccess(null);if(undoTimerRef.current) clearTimeout(undoTimerRef.current);
   };
 
   const recent=movements.filter(m=>m.type===type).slice(0,30);
@@ -2551,13 +2568,19 @@ function WastageModule({T,isDark,onToggle,currentUser,onBack,onLogout,fbItems,gl
   const canViewReports=["admin","supervisor"].includes(currentUser.role);
 
   useEffect(()=>{
-    fbLoad("wastageLog",[]).then(w=>{setWastageLog(w);setReady(true);});
+    let mounted=true;
+    fbLoad("wastageLog",[]).then(w=>{
+      if(mounted){setWastageLog(w);setReady(true);}
+    });
+    return()=>{mounted=false;};
   },[]);
   useEffect(()=>{
-    if(ready){
-      fbSave("wastageLog",wastageLog);
+    if(!ready) return;
+    fbSave("wastageLog",wastageLog);
+    const t=setTimeout(()=>{
       fetch("/api/sync-wastage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({wastageLog})}).catch(()=>{});
-    }
+    },1000);
+    return()=>clearTimeout(t);
   },[wastageLog,ready]);
 
   const TABS=[
@@ -3069,14 +3092,19 @@ function GRNModule({T,isDark,onToggle,currentUser,onBack,onLogout,fbItems,setFbI
   const canViewReports=["admin","supervisor"].includes(currentUser.role);
 
   useEffect(()=>{
-    fbLoad("grnLog",[]).then(g=>{setGrnLog(g);setReady(true);});
+    let mounted=true;
+    fbLoad("grnLog",[]).then(g=>{
+      if(mounted){setGrnLog(g);setReady(true);}
+    });
+    return()=>{mounted=false;};
   },[]);
   useEffect(()=>{
-    if(ready){
-      fbSave("grnLog",grnLog);
-      // Sync to Google Sheets
+    if(!ready) return;
+    fbSave("grnLog",grnLog);
+    const t=setTimeout(()=>{
       fetch("/api/sync-grn",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({grnLog})}).catch(()=>{});
-    }
+    },1000);
+    return()=>clearTimeout(t);
   },[grnLog,ready]);
 
   const TABS=[
@@ -4183,10 +4211,24 @@ export default function App(){
       if(alertSettings.threshold==="below50") return i.stock<Math.ceil(i.minQty*0.5);
       return i.stock<i.minQty;
     };
+    // Remove items no longer low from tracking set
+    items.forEach(i=>{if(!isLow(i)) alertedRef.current.delete(i.id);});
+    // Find newly low items not yet alerted
     const newLow=items.filter(i=>isLow(i)&&!alertedRef.current.has(i.id));
-    if(newLow.length>0){newLow.forEach(i=>{alertedRef.current.add(i.id);localStorage.setItem("alertedIds",JSON.stringify([...alertedRef.current]));});setAlertBanner(prev=>{const ids=new Set(prev.map(x=>x.id));return[...prev,...newLow.filter(i=>!ids.has(i.id))];});}
-    items.filter(i=>!isLow(i)).forEach(i=>alertedRef.current.delete(i.id));
-    setAlertBanner(prev=>prev.filter(i=>{const cur=items.find(x=>x.id===i.id);return cur&&isLow(cur);}));
+    if(newLow.length>0){
+      newLow.forEach(i=>alertedRef.current.add(i.id));
+      // Single localStorage write per effect run, not one per item
+      localStorage.setItem("alertedIds",JSON.stringify([...alertedRef.current]));
+      setAlertBanner(prev=>{
+        const ids=new Set(prev.map(x=>x.id));
+        return[...prev,...newLow.filter(i=>!ids.has(i.id))];
+      });
+    }
+    // Prune banner to only currently-low items
+    setAlertBanner(prev=>prev.filter(i=>{
+      const cur=items.find(x=>x.id===i.id);
+      return cur&&isLow(cur);
+    }));
   },[items,ready,currentUser,alertSettings.threshold]);
 
   // Track last activity and auto-timeout after 2 hours
