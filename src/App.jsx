@@ -207,14 +207,7 @@ const HazelLogo=memo(function HazelLogo({T,size=34}){
     </svg>
   );
 });
-
-return (
-  <svg width="80" height="64" viewBox="0 0 80 64">
-    <circle cx="40" cy="32" r="4.5" fill={T.accent}/>
-    <circle cx="40" cy="32" r="9" stroke={T.accent} strokeWidth="1.2" fill="none"/>
-  </svg>
-);
-
+ 
 
 function ThemeToggle({T,isDark,onToggle}){
   return(
@@ -682,7 +675,13 @@ function ItemModal({T,item,onClose,onSave}){
           <div><Label T={T}>Per Unit Price (Rs)</Label><Inp T={T} type="number" value={f.perUnit||""} onChange={v=>set("perUnit",v)} placeholder="0.00"/></div>
           <div><Label T={T}>Current Stock</Label><Inp T={T} type="number" value={f.stock} onChange={v=>set("stock",Number(v))}/></div>
           <div><Label T={T}>Min Qty</Label><Inp T={T} type="number" value={f.minQty} onChange={v=>set("minQty",Number(v))}/></div>
-          <div><Label T={T}>Qty Size (e.g. 1kg, 400g)</Label><Inp T={T} value={f.qtySize||""} onChange={v=>set("qtySize",v)} placeholder="e.g. 1kg"/></div>
+          <div style={{gridColumn:"1/-1"}}>
+            <Label T={T}>Qty Size</Label>
+            <Inp T={T} value={f.qtySize||""} onChange={v=>set("qtySize",v)} placeholder="e.g. 1kg, 400g, 1L"/>
+            <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginTop:4,lineHeight:1.5}}>
+              ⓘ Fill qty according to unit — e.g. if unit is <strong>Grams</strong>, enter <strong>1000</strong> for 1kg. If unit is <strong>mL</strong>, enter <strong>1000</strong> for 1L.
+            </div>
+          </div>
           <div><Label T={T}>Location</Label><Inp T={T} value={f.location||""} onChange={v=>set("location",v)} placeholder="e.g. Stores"/></div>
           <div style={{gridColumn:"1/-1"}}><Label T={T}>Barcode</Label><Inp T={T} value={f.barcode||""} onChange={v=>set("barcode",v)} placeholder="Scan or type barcode number"/></div>
         </div>
@@ -702,12 +701,23 @@ function InventoryTab({T,items,setItems,canEdit}){
   const [deptF,setDeptF]=useState("All");
   const [editItem,setEditItem]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
+  const [editingPrice,setEditingPrice]=useState(null);// {id, value}
   const filtered=useMemo(()=>{
     let r=items;
     if(deptF!=="All") r=r.filter(i=>i.dept===deptF);
     if(search) r=r.filter(i=>i.name.toLowerCase().includes(search.toLowerCase())||i.code.toLowerCase().includes(search.toLowerCase())||(i.supplier||"").toLowerCase().includes(search.toLowerCase()));
     return r.sort((a,b)=>a.code.localeCompare(b.code));
   },[items,search,deptF]);
+
+  const savePrice=(item)=>{
+    const newPrice=Number(editingPrice.value);
+    if(!newPrice||newPrice===item.perUnit){setEditingPrice(null);return;}
+    const updated={...item,perUnit:newPrice};
+    recordAudit(setAuditLog,"update","fb",item.name,currentUser,{perUnit:item.perUnit},{perUnit:newPrice});
+    setItems(prev=>prev.map(i=>i.id===item.id?updated:i));
+    setEditingPrice(null);
+  };
+
   return(
     <div>
       <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
@@ -733,7 +743,26 @@ function InventoryTab({T,items,setItems,canEdit}){
                 <td style={{padding:"10px 13px",fontWeight:800,fontSize:16,color:item.stock<=0?T.low:item.stock<item.minQty?T.warn:T.text,fontFamily:MO}}>{item.stock}</td>
                 <td style={{padding:"10px 13px",fontSize:13,color:T.muted,fontFamily:MO}}>{item.minQty}</td>
                 <td style={{padding:"10px 13px"}}><StockBadge T={T} surplus={item.stock-item.minQty}/></td>
-                <td style={{padding:"10px 13px",fontSize:12,color:T.muted,fontFamily:MO}}>{item.perUnit?fmtRs(item.perUnit):"—"}</td>
+                {/* Per Unit — inline editable with audit log */}
+                <td style={{padding:"10px 13px",fontFamily:MO,minWidth:120}}>
+                  {canEdit&&editingPrice?.id===item.id?(
+                    <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                      <input autoFocus type="number" value={editingPrice.value}
+                        onChange={e=>setEditingPrice(p=>({...p,value:e.target.value}))}
+                        onKeyDown={e=>{if(e.key==="Enter") savePrice(item);if(e.key==="Escape") setEditingPrice(null);}}
+                        style={{width:80,padding:"4px 6px",borderRadius:5,border:`1px solid ${T.accent}`,background:T.bg,color:T.text,fontFamily:MO,fontSize:12,outline:"none"}}/>
+                      <button onClick={()=>savePrice(item)} style={{padding:"3px 7px",borderRadius:4,border:"none",background:T.ok,color:"#fff",cursor:"pointer",fontSize:11,fontFamily:MO,fontWeight:700}}>✓</button>
+                      <button onClick={()=>setEditingPrice(null)} style={{padding:"3px 7px",borderRadius:4,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:MO}}>✕</button>
+                    </div>
+                  ):(
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:12,color:T.muted}}>{item.perUnit?fmtRs(item.perUnit):"—"}</span>
+                      {canEdit&&<button onClick={()=>setEditingPrice({id:item.id,value:item.perUnit||""})}
+                        style={{padding:"2px 6px",borderRadius:4,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontSize:10,fontFamily:MO,opacity:0.6}}
+                        title="Edit price">✎</button>}
+                    </div>
+                  )}
+                </td>
                 {canEdit&&<td style={{padding:"10px 13px"}}><button onClick={()=>setEditItem(item)} style={{padding:"4px 9px",borderRadius:5,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:MO}}>Edit</button></td>}
               </tr>
             ))}
@@ -1443,15 +1472,23 @@ function AICameraScanner({T,items,onSelect,onClose}){
     can.width=vid.videoWidth||640;can.height=vid.videoHeight||480;
     can.getContext("2d").drawImage(vid,0,0);
     const base64=can.toDataURL("image/jpeg",0.85).split(",")[1];
-    const itemList=items.map(i=>`${i.code}: ${i.name} (${i.dept}${i.brand?", "+i.brand:""})`).join("\n");
+    // Include brand, qty size and unit in the item list so AI can match by packaging weight/size
+    const itemList=items.map(i=>`${i.code}: ${i.name} (${i.dept}${i.brand?", brand: "+i.brand:""}${i.qtySize?", size: "+i.qtySize:""}${i.unit?", unit: "+i.unit:""})`).join("\n");
     const resp=await fetch("/api/identify",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({image:base64,items:itemList}),
+      // Extra instructions: analyse packaging weight/size (1kg=1000g etc), supplier may not be visible
+      body:JSON.stringify({
+        image:base64,
+        items:itemList,
+        instructions:"Analyse the brand name, company logo, packaging size and weight visible on the product. Common conversions: 1kg=1000g, 1L=1000ml. The supplier name may NOT be visible on the packaging — do not require it. Match by brand, product name, and package size/weight to the closest item in the list."
+      }),
     });
     const data=await resp.json();
     const code=data.result?.trim();
-    const matched=items.find(i=>i.code===code||i.barcode===code);
+    // Try exact match first, then partial code match
+    const matched=items.find(i=>i.code===code||i.barcode===code)||
+                  items.find(i=>code&&(i.name.toLowerCase().includes(code.toLowerCase())||code.toLowerCase().includes(i.code.toLowerCase())));
     setAiResult({code,matched});
   }catch(e){
     setCamError("AI error: "+e.message);
@@ -1967,7 +2004,7 @@ function QRScanner({T,items,onFound,onClose}){
 const DEFAULT_GLASS_ITEMS = [];
 
 function GlassItemModal({T,item,onClose,onSave,canDelete,isMobile}){
-  const [f,setF]=useState(item||{shortCode:"",fullCode:"",name:"",dept:"FOH",category:"",usage:"",kitchenQty:0,frontQty:0,minQty:0,photoUrl:"",notes:""});
+  const [f,setF]=useState(item||{shortCode:"",fullCode:"",name:"",dept:"FOH",category:"",usage:"",kitchenQty:0,frontQty:0,minQty:0,photoUrl:"",notes:"",perUnit:""});
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
   const total=(f.kitchenQty||0)+(f.frontQty||0);
   return(
@@ -1984,6 +2021,7 @@ function GlassItemModal({T,item,onClose,onSave,canDelete,isMobile}){
           <div><Label T={T}>Kitchen Qty</Label><Inp T={T} type="number" value={f.kitchenQty} onChange={v=>set("kitchenQty",Number(v))}/></div>
           <div><Label T={T}>Front Qty</Label><Inp T={T} type="number" value={f.frontQty} onChange={v=>set("frontQty",Number(v))}/></div>
           <div><Label T={T}>Min Qty (alert below)</Label><Inp T={T} type="number" value={f.minQty} onChange={v=>set("minQty",Number(v))}/></div>
+          <div><Label T={T}>Price per Unit (Rs) <span style={{fontWeight:400,textTransform:"none",letterSpacing:0,opacity:0.6}}>(optional)</span></Label><Inp T={T} type="number" value={f.perUnit||""} onChange={v=>set("perUnit",v)} placeholder="e.g. 450.00"/></div>
           <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:total<f.minQty?T.lowBg:T.okBg,borderRadius:8,border:`1px solid ${total<f.minQty?T.low:T.ok}44`}}>
             <div><div style={{fontSize:9,fontFamily:MO,fontWeight:700,color:T.muted,letterSpacing:"0.08em"}}>TOTAL STOCK</div><div style={{fontSize:22,fontWeight:800,color:total<f.minQty?T.low:T.ok,fontFamily:MO}}>{total}</div></div>
           </div>
@@ -2174,10 +2212,12 @@ function GlassTransferModal({T,items,onClose,onSave}){
   );
 }
 
-function GlasswareModule({T,isDark,onToggle,currentUser,onBack,onLogout,setAuditLog=()=>{},auditLog=[]}){
+function GlasswareModule({T,isDark,onToggle,currentUser,onBack,onLogout,setAuditLog=()=>{},auditLog=[],
+  // FIX: accept items/movements from root App so GRN shares same state — no split-brain
+  glassItems:itemsProp=[],setGlassItems:setItemsProp=null,glassMov:movProp=[],setGlassMov:setMovProp=null}){
   const isMobile=useIsMobile();
-  const [items,setItems]=useState([]);
-  const [movements,setMovements]=useState([]);
+  const [localItems,setLocalItems]=useState([]);
+  const [localMovements,setLocalMovements]=useState([]);
   const [tab,setTab]=useState("inventory");
   const [ready,setReady]=useState(false);
   const [showAdd,setShowAdd]=useState(false);
@@ -2191,32 +2231,32 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack,onLogout,setAudit
   const [deptFilter,setDeptFilter]=useState("All");
   const [catFilter,setCatFilter]=useState("All");
 
+  // If root passed real state, use it — otherwise use local state (fallback for direct mount)
+  const items=setItemsProp?itemsProp:localItems;
+  const movements=setMovProp?movProp:localMovements;
+  const setItems=setItemsProp||setLocalItems;
+  const setMovements=setMovProp||setLocalMovements;
+
   const canEdit=currentUser.role==="admin"||currentUser.role==="supervisor";
   const canDelete=currentUser.role==="admin";
 
-  // Boot: load glassware data from Firebase
+  // Boot only if root didn't provide data (items.length===0 and no setter)
   useEffect(()=>{
+    if(setItemsProp&&itemsProp.length>=0){
+      // Root already loaded data — just mark ready
+      setReady(true);
+      return;
+    }
     async function boot(){
       const [gi,gm]=await Promise.all([fbLoad("glassItems",[]),fbLoad("glassMov",[])]);
-      setItems(gi);setMovements(gm);setReady(true);
+      setLocalItems(gi);setLocalMovements(gm);setReady(true);
     }
     boot();
   },[]);
 
-  // Firebase persistence — debounced, no double-fire
-  useFirebasePersist("glassItems",items,ready);
-  useFirebasePersist("glassMov",movements,ready);
-
-  // Single debounced sheet sync when either items OR movements change
-  const glassSyncRef=useRef(null);
-  useEffect(()=>{
-    if(!ready) return;
-    if(glassSyncRef.current) clearTimeout(glassSyncRef.current);
-    glassSyncRef.current=setTimeout(()=>{
-      fetch("/api/sync-glassware",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items,movements})}).catch(()=>{});
-    },1500);
-    return()=>{if(glassSyncRef.current) clearTimeout(glassSyncRef.current);};
-  },[items,movements,ready]);
+  // Only persist locally if root is NOT managing the state
+  useFirebasePersist("glassItems",items,ready&&!setItemsProp);
+  useFirebasePersist("glassMov",movements,ready&&!setMovProp);
 
   const logMove=(type,item,qty,location,note)=>{
     setMovements(prev=>[{id:uid(),date:nowStr(),type,itemName:item.name,shortCode:item.shortCode,qty,location,personName:currentUser.name,userRole:currentUser.role,note:note||""},...prev].slice(0,500));
@@ -2753,35 +2793,48 @@ function WastageCard({T,entry}){
 
 function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile}){
   const [sourceType,setSourceType]=useState("fb");
-  const [entryMode,setEntryMode]=useState("inventory");// "inventory" or "free"
+  const [entryMode,setEntryMode]=useState("inventory");
   const [freeItemName,setFreeItemName]=useState("");
   const [freeUnit,setFreeUnit]=useState("Nos");
-  const [freeLoss,setFreeLoss]=useState(0);
+  const [freeLoss,setFreeLoss]=useState("");
   const [search,setSearch]=useState("");
   const [selected,setSelected]=useState(null);
   const [qty,setQty]=useState(1);
   const [location,setLocation]=useState("kitchen");
   const [wastageType,setWastageType]=useState("Expired");
+  const [otherDesc,setOtherDesc]=useState("");
   const [explanation,setExplanation]=useState("");
   const [photoUrl,setPhotoUrl]=useState("");
   const [capturing,setCapturing]=useState(false);
+  const [camError,setCamError]=useState("");
+  const [manualLoss,setManualLoss]=useState("");
   const videoRef=useRef(null);
   const streamRef=useRef(null);
 
-  const items=sourceType==="fb"?fbItems:glassItems;
-  const filtered=useMemo(()=>{
-    if(!search) return [];
+  // FIX 8: auto-detect from description across BOTH inventories
+  const autoDetected=useMemo(()=>{
+    if(!search||search.length<2) return[];
     const q=search.toLowerCase();
-    return items.filter(i=>i.name.toLowerCase().includes(q)||i.code?.toLowerCase().includes(q)||i.shortCode?.toLowerCase().includes(q)).slice(0,6);
-  },[items,search,sourceType]);
+    const fbM=(fbItems||[]).filter(i=>i.name.toLowerCase().includes(q)||i.code?.toLowerCase().includes(q)||(i.brand&&i.brand.toLowerCase().includes(q))).map(i=>({...i,_type:"fb"}));
+    const glM=(glassItems||[]).filter(i=>i.name.toLowerCase().includes(q)||i.shortCode?.toLowerCase().includes(q)).map(i=>({...i,_type:"glass"}));
+    return[...fbM,...glM].slice(0,6);
+  },[search,fbItems,glassItems]);
 
-  const loss=selected?(qty*(Number(selected.perUnit)||0)):0;
+  const items=sourceType==="fb"?fbItems:glassItems;
+  const autoLoss=selected?(qty*(Number(selected.perUnit)||0)):0;
+  const effectiveLoss=manualLoss!==""?Number(manualLoss):autoLoss;
+  const effectiveWastageType=wastageType==="Other"&&otherDesc?`Other: ${otherDesc}`:wastageType;
+
+  const canSubmit=entryMode==="free"
+    ?freeItemName&&explanation&&photoUrl&&freeLoss!==""
+    :selected&&qty>=1&&explanation&&photoUrl&&(wastageType!=="Other"||otherDesc);
 
   const startCamera=async()=>{
+    setCamError("");
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}});
       streamRef.current=stream;
-      if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play();}
+      if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play().catch(()=>{});}
       setCapturing(true);
     }catch(e){setCamError("Camera access denied: "+e.message);}
   };
@@ -2789,28 +2842,27 @@ function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile})
   const capturePhoto=()=>{
     if(!videoRef.current) return;
     const canvas=document.createElement("canvas");
-    canvas.width=videoRef.current.videoWidth;
-    canvas.height=videoRef.current.videoHeight;
+    canvas.width=videoRef.current.videoWidth||640;canvas.height=videoRef.current.videoHeight||480;
     canvas.getContext("2d").drawImage(videoRef.current,0,0);
     setPhotoUrl(canvas.toDataURL("image/jpeg",0.7));
     streamRef.current?.getTracks().forEach(t=>t.stop());
+    streamRef.current=null;
     setCapturing(false);
   };
 
   const uploadPhoto=(e)=>{
-    const file=e.target.files[0];
-    if(!file) return;
+    const file=e.target.files[0];if(!file) return;
     const reader=new FileReader();
     reader.onload=ev=>setPhotoUrl(ev.target.result);
     reader.readAsDataURL(file);
   };
 
   const submit=()=>{
+    if(!canSubmit) return;
     if(entryMode==="free"){
-      if(!freeItemName||!explanation) return;
-      onSave({id:uid(),date:nowStr(),sourceType:"free",itemId:null,itemName:freeItemName,unit:freeUnit,qty,location:null,wastageType,explanation,photoUrl,staffName:currentUser.name,userRole:currentUser.role,loss:freeLoss,perUnit:0});
+      onSave({id:uid(),date:nowStr(),sourceType:"free",itemId:null,itemName:freeItemName,unit:freeUnit,qty,location:null,wastageType:effectiveWastageType,explanation,photoUrl,staffName:currentUser.name,userRole:currentUser.role,loss:Number(freeLoss),perUnit:0});
     } else {
-      onSave({id:uid(),date:nowStr(),sourceType,itemId:selected.id,itemName:selected.name,unit:selected.unit||"",qty,location:sourceType==="glass"?location:null,wastageType,explanation,photoUrl,staffName:currentUser.name,userRole:currentUser.role,loss,perUnit:selected.perUnit||0});
+      onSave({id:uid(),date:nowStr(),sourceType,itemId:selected.id,itemName:selected.name,unit:selected.unit||"",qty,location:sourceType==="glass"?location:null,wastageType:effectiveWastageType,explanation,photoUrl,staffName:currentUser.name,userRole:currentUser.role,loss:effectiveLoss,perUnit:selected.perUnit||0});
     }
   };
 
@@ -2823,19 +2875,19 @@ function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile})
       <Card T={T} s={{padding:24,width:500,maxWidth:"100%",maxHeight:"95vh",overflowY:"auto"}}>
         <h2 style={{margin:"0 0 16px",fontSize:18,fontFamily:SE,fontWeight:600,color:T.low}}>🗑️ Record Wastage</h2>
 
-        {/* Entry mode toggle */}
+        {/* Entry mode */}
         <div style={{display:"flex",gap:8,marginBottom:12}}>
           {[["inventory","📦 From Inventory"],["free","✏️ Free Entry"]].map(([val,label])=>(
-            <button key={val} onClick={()=>{setEntryMode(val);setSelected(null);setSearch("");setFreeItemName("");}}
+            <button key={val} onClick={()=>{setEntryMode(val);setSelected(null);setSearch("");setFreeItemName("");setCamError("");}}
               style={{flex:1,padding:"8px",borderRadius:8,border:`2px solid ${entryMode===val?T.accent:T.border}`,background:entryMode===val?T.accentDim:T.card,color:entryMode===val?T.accent:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700}}>
               {label}
             </button>
           ))}
         </div>
 
-        {/* Source type toggle - only for inventory mode */}
+        {/* FIX 10: F&B renamed to Storeroom */}
         {entryMode==="inventory"&&<div style={{display:"flex",gap:8,marginBottom:16}}>
-          {[["fb","🥛 F&B Food"],["glass","🥤 Glassware"]].map(([val,label])=>(
+          {[["fb","🏪 Storeroom"],["glass","🥤 Glassware"]].map(([val,label])=>(
             <button key={val} onClick={()=>{setSourceType(val);setSelected(null);setSearch("");setWastageType(val==="fb"?"Expired":"Broken");}}
               style={{flex:1,padding:"10px",borderRadius:8,border:`2px solid ${sourceType===val?T.accent:T.border}`,background:sourceType===val?T.accentDim:T.card,color:sourceType===val?T.accent:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700}}>
               {label}
@@ -2843,35 +2895,42 @@ function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile})
           ))}
         </div>}
 
-        {entryMode==="free"&&<div style={{background:T.warnBg,border:`1px solid ${T.warn}44`,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:T.warn,fontFamily:MO,lineHeight:1.5}}>⚠️ <strong>Free Entry Mode</strong> — Use this for food prepared in the kitchen that is not tracked in the inventory system (e.g. leftover rice, prep trimmings, burnt dishes). This will NOT deduct from any inventory.</div>}
+        {entryMode==="free"&&<div style={{background:T.warnBg,border:`1px solid ${T.warn}44`,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:T.warn,fontFamily:MO,lineHeight:1.5}}>⚠️ <strong>Free Entry</strong> — For kitchen food not in inventory. Will NOT deduct stock.</div>}
 
         {/* Free entry fields */}
         {entryMode==="free"&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-            <div style={{gridColumn:"1/-1"}}><Label T={T}>Item / Food Name</Label><Inp T={T} value={freeItemName} onChange={setFreeItemName} placeholder="e.g. Leftover Arabiata, Burnt Toast…"/></div>
+            <div style={{gridColumn:"1/-1"}}><Label T={T}>Item / Food Name <span style={{color:T.low,fontWeight:400,fontSize:10}}>*</span></Label><Inp T={T} value={freeItemName} onChange={setFreeItemName} placeholder="e.g. Leftover Arabiata, Burnt Toast…"/></div>
             <div><Label T={T}>Wastage Type</Label><Sel T={T} value={wastageType} onChange={setWastageType}><option>Expired</option><option>Spoiled</option><option>Overcooked</option><option>Leftover</option><option>Burnt</option><option>Damaged</option><option>Other</option></Sel></div>
+            {/* FIX 9 */}
+            {wastageType==="Other"&&<div style={{gridColumn:"1/-1"}}><Label T={T}>Describe Type <span style={{color:T.low,fontWeight:400,fontSize:10}}>*</span></Label><Inp T={T} value={otherDesc} onChange={setOtherDesc} placeholder="e.g. Dropped, Contaminated…"/></div>}
             <div><Label T={T}>Quantity</Label><Inp T={T} type="number" value={qty} onChange={v=>setQty(Math.max(1,Number(v)))}/></div>
-            <div><Label T={T}>Unit</Label><Inp T={T} value={freeUnit} onChange={setFreeUnit} placeholder="e.g. kg, portions, plates"/></div>
-            <div><Label T={T}>Est. Loss (Rs)</Label><Inp T={T} type="number" value={freeLoss} onChange={v=>setFreeLoss(Number(v))} placeholder="0"/></div>
+            <div><Label T={T}>Unit</Label><Inp T={T} value={freeUnit} onChange={setFreeUnit} placeholder="e.g. kg, portions"/></div>
+            {/* FIX 12 */}
+            <div style={{gridColumn:"1/-1"}}>
+              <Label T={T}>Cost / Loss (Rs) <span style={{color:T.low,fontWeight:400,fontSize:10}}>* required</span></Label>
+              <Inp T={T} type="number" value={freeLoss} onChange={setFreeLoss} placeholder="Enter estimated loss amount"/>
+              {freeLoss===""&&<div style={{fontSize:10,color:T.low,fontFamily:MO,marginTop:3}}>⚠ Cost/loss is required</div>}
+            </div>
           </div>
         )}
 
-        {/* Item search - only in inventory mode */}
+        {/* FIX 8: search across ALL inventory */}
         {entryMode==="inventory"&&<div style={{marginBottom:12}}>
-          <Label T={T}>Search Item</Label>
-          <Inp T={T} value={search} onChange={v=>{setSearch(v);setSelected(null);}} placeholder="Name or code…"/>
-          {filtered.length>0&&!selected&&(
+          <Label T={T}>Search Item <span style={{fontWeight:400,fontSize:10,color:T.muted,textTransform:"none",letterSpacing:0}}>(searches Storeroom & Glassware)</span></Label>
+          <Inp T={T} value={search} onChange={v=>{setSearch(v);setSelected(null);}} placeholder="Type item name, code or brand…"/>
+          {autoDetected.length>0&&!selected&&(
             <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,marginTop:4,overflow:"hidden"}}>
-              {filtered.map(i=>(
-                <div key={i.id} onClick={()=>{setSelected(i);setSearch(i.name);}}
-                  style={{padding:"10px 14px",cursor:"pointer",borderBottom:`1px solid ${T.border}`}}
+              {autoDetected.map(i=>(
+                <div key={i.id} onClick={()=>{setSelected(i);setSourceType(i._type);setSearch(i.name);setWastageType(i._type==="fb"?"Expired":"Broken");setManualLoss("");}}
+                  style={{padding:"10px 14px",cursor:"pointer",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}
                   onMouseEnter={e=>e.currentTarget.style.background=T.card2}
                   onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                  <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{i.name}</div>
-                  <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>
-                    {sourceType==="fb"?`${i.code} · Stock: ${i.stock}`:`${i.shortCode} · K:${i.kitchenQty} F:${i.frontQty}`}
-                    {i.perUnit?` · Rs ${i.perUnit}/unit`:""}
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{i.name}</div>
+                    <div style={{fontSize:10,color:T.muted,fontFamily:MO}}>{i._type==="fb"?`Storeroom · ${i.code} · Stock: ${i.stock}`:`Glassware · ${i.shortCode} · K:${i.kitchenQty} F:${i.frontQty}`}{i.perUnit?` · Rs ${i.perUnit}/unit`:""}</div>
                   </div>
+                  <span style={{fontSize:9,fontWeight:700,fontFamily:MO,padding:"2px 7px",borderRadius:3,background:i._type==="fb"?T.warnBg:T.accentDim,color:i._type==="fb"?T.warn:T.accent}}>{i._type==="fb"?"STORE":"GLASS"}</span>
                 </div>
               ))}
             </div>
@@ -2881,62 +2940,52 @@ function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile})
         {selected&&(
           <>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-              <div>
-                <Label T={T}>Wastage Type</Label>
-                <Sel T={T} value={wastageType} onChange={setWastageType}>
-                  {types.map(t=><option key={t}>{t}</option>)}
-                </Sel>
-              </div>
-              <div>
-                <Label T={T}>Quantity</Label>
-                <Inp T={T} type="number" value={qty} onChange={v=>setQty(Math.max(1,Number(v)))}/>
-              </div>
-              {sourceType==="glass"&&(
-                <div style={{gridColumn:"1/-1"}}>
-                  <Label T={T}>Location</Label>
-                  <Sel T={T} value={location} onChange={setLocation}>
-                    <option value="kitchen">Kitchen (current: {selected.kitchenQty})</option>
-                    <option value="front">Front (current: {selected.frontQty})</option>
-                  </Sel>
-                </div>
-              )}
+              <div><Label T={T}>Wastage Type</Label><Sel T={T} value={wastageType} onChange={setWastageType}>{types.map(t=><option key={t}>{t}</option>)}</Sel></div>
+              <div><Label T={T}>Quantity</Label><Inp T={T} type="number" value={qty} onChange={v=>setQty(Math.max(1,Number(v)))}/></div>
+              {/* FIX 9 */}
+              {wastageType==="Other"&&<div style={{gridColumn:"1/-1"}}><Label T={T}>Describe Type <span style={{color:T.low,fontWeight:400,fontSize:10}}>* required</span></Label><Inp T={T} value={otherDesc} onChange={setOtherDesc} placeholder="e.g. Dropped, Contaminated, Pest damage…"/></div>}
+              {sourceType==="glass"&&<div style={{gridColumn:"1/-1"}}><Label T={T}>Location</Label><Sel T={T} value={location} onChange={setLocation}><option value="kitchen">Kitchen (current: {selected.kitchenQty})</option><option value="front">Front (current: {selected.frontQty})</option></Sel></div>}
             </div>
 
-            {/* Loss estimate */}
-            {loss>0&&(
-              <div style={{background:T.lowBg,border:`1px solid ${T.low}44`,borderRadius:8,padding:"10px 14px",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:12,color:T.muted,fontFamily:MO}}>Estimated loss</span>
-                <span style={{fontSize:16,fontWeight:800,color:T.low,fontFamily:MO}}>Rs {loss.toLocaleString()}</span>
+            {/* FIX 12: cost/loss required + editable */}
+            <div style={{marginBottom:12}}>
+              <Label T={T}>Cost / Loss (Rs) <span style={{color:T.low,fontWeight:400,fontSize:10}}>* required</span></Label>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <input type="number" value={manualLoss!==""?manualLoss:(autoLoss||"")} onChange={e=>setManualLoss(e.target.value)}
+                  placeholder={autoLoss>0?String(autoLoss):"Enter loss amount"}
+                  style={{flex:1,padding:"10px 13px",background:T.bg,border:`1px solid ${effectiveLoss>0?T.low:T.border}`,borderRadius:8,color:T.text,fontFamily:MO,fontSize:14,fontWeight:700,outline:"none"}}/>
+                {autoLoss>0&&manualLoss!==""&&<button onClick={()=>setManualLoss("")} style={{flexShrink:0,padding:"6px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.muted,cursor:"pointer",fontSize:10,fontFamily:MO}}>↺</button>}
               </div>
-            )}
+              {effectiveLoss===0&&<div style={{fontSize:10,color:T.low,fontFamily:MO,marginTop:3}}>⚠ Enter estimated value lost</div>}
+            </div>
 
-            {/* Explanation */}
             <div style={{marginBottom:12}}>
               <Label T={T}>Explanation <span style={{color:T.low,fontSize:10,fontFamily:MO}}>* required</span></Label>
-              <textarea value={explanation} onChange={e=>setExplanation(e.target.value)}
-                placeholder="What happened? e.g. Milk left out overnight, glass dropped during service…"
+              <textarea value={explanation} onChange={e=>setExplanation(e.target.value)} placeholder="What happened? e.g. Milk left out overnight, glass dropped during service…"
                 style={{width:"100%",minHeight:72,padding:"10px 12px",background:T.bg,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:13,fontFamily:SE,resize:"vertical",outline:"none",boxSizing:"border-box",lineHeight:1.5}}/>
             </div>
 
-            {/* Photo */}
+            {/* FIX 11: photo required */}
             <div style={{marginBottom:16}}>
-              <Label T={T}>Photo Evidence</Label>
+              <Label T={T}>Photo Evidence <span style={{color:T.low,fontSize:10,fontFamily:MO}}>* required</span></Label>
+              {!photoUrl&&<div style={{fontSize:10,color:T.low,fontFamily:MO,marginBottom:6}}>⚠ A photo is required to submit wastage</div>}
+              {camError&&<div style={{fontSize:11,color:T.low,fontFamily:MO,marginBottom:6}}>{camError}</div>}
               {capturing?(
                 <div style={{position:"relative",borderRadius:10,overflow:"hidden",marginBottom:8}}>
                   <video ref={videoRef} style={{width:"100%",maxHeight:200,objectFit:"cover",display:"block"}} muted playsInline/>
                   <button onClick={capturePhoto} style={{position:"absolute",bottom:10,left:"50%",transform:"translateX(-50%)",background:"#fff",border:"none",borderRadius:20,padding:"8px 20px",cursor:"pointer",fontFamily:MO,fontSize:13,fontWeight:700,color:"#c0392b"}}>📸 Capture</button>
+                  <button onClick={()=>{streamRef.current?.getTracks().forEach(t=>t.stop());streamRef.current=null;setCapturing(false);}} style={{position:"absolute",top:6,right:6,background:"#000a",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",color:"#fff",fontSize:11}}>✕</button>
                 </div>
               ):photoUrl?(
                 <div style={{position:"relative",marginBottom:8}}>
-                  <img src={photoUrl} alt="wastage" style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:8,border:`1px solid ${T.border}`}}/>
+                  <img src={photoUrl} alt="wastage" style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:8,border:`1px solid ${T.ok}`}}/>
                   <button onClick={()=>setPhotoUrl("")} style={{position:"absolute",top:6,right:6,background:"#000a",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",color:"#fff",fontSize:11}}>✕ Remove</button>
+                  <div style={{position:"absolute",bottom:6,left:6,background:"#000a",borderRadius:4,padding:"2px 6px",fontSize:9,color:T.ok,fontFamily:MO,fontWeight:700}}>✓ Photo added</div>
                 </div>
               ):(
                 <div style={{display:"flex",gap:8}}>
-                  <button onClick={startCamera} style={{flex:1,padding:"10px",border:`1px dashed ${T.border}`,borderRadius:8,background:T.card,color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700}}>📷 Take Photo</button>
-                  <label style={{flex:1,padding:"10px",border:`1px dashed ${T.border}`,borderRadius:8,background:T.card,color:T.muted,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-                    🖼 Gallery<input type="file" accept="image/*" onChange={uploadPhoto} style={{display:"none"}}/>
-                  </label>
+                  <button onClick={startCamera} style={{flex:1,padding:"12px",border:`2px dashed ${T.low}66`,borderRadius:8,background:T.lowBg,color:T.low,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700}}>📷 Take Photo</button>
+                  <label style={{flex:1,padding:"12px",border:`2px dashed ${T.low}66`,borderRadius:8,background:T.lowBg,color:T.low,cursor:"pointer",fontFamily:MO,fontSize:12,fontWeight:700,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>🖼 Gallery<input type="file" accept="image/*" onChange={uploadPhoto} style={{display:"none"}}/></label>
                 </div>
               )}
             </div>
@@ -2945,13 +2994,12 @@ function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile})
 
         <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
           <Btn T={T} onClick={onClose}>Cancel</Btn>
-          <Btn T={T} v="danger" onClick={submit} disabled={(entryMode==="inventory"&&!selected)||qty<1||!explanation||(entryMode==="free"&&!freeItemName)}>Submit Wastage</Btn>
+          <Btn T={T} v="danger" onClick={submit} disabled={!canSubmit}>Submit Wastage</Btn>
         </div>
       </Card>
     </div>
   );
 }
-
 function WastageHistory({T,wastageLog,isMobile}){
   const [filter,setFilter]=useState("all");
   const filtered=filter==="all"?wastageLog:wastageLog.filter(w=>w.sourceType===filter);
@@ -3199,6 +3247,7 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
   const [step,setStep]=useState(1);
   const [scanning,setScanning]=useState(false);
   const [aiProcessing,setAiProcessing]=useState(false);
+  const [camError,setCamError]=useState("");// FIX: was missing, caused runtime crash on camera error
   const videoRef=useRef(null);
   const streamRef=useRef(null);
 
@@ -3549,7 +3598,8 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
 
               {/* Item photo */}
               <div>
-                <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginBottom:6}}>ITEM PHOTO <span style={{color:T.low}}>* required</span></div>
+                <div style={{fontSize:10,color:T.muted,fontFamily:MO,marginBottom:6}}>ITEM PHOTO <span style={{color:T.low}}>* required to proceed</span></div>
+                {camError&&<div style={{fontSize:11,color:T.low,fontFamily:MO,marginBottom:6,background:T.lowBg,padding:"6px 10px",borderRadius:6}}>{camError}</div>}
                 {item.capturing?(
                   <div style={{position:"relative",borderRadius:8,overflow:"hidden"}}>
                     <video ref={el=>{if(el){itemVideoRefs.current[item.id]=el;const stream=itemStreamRefs.current[item.id];if(stream&&el.srcObject!==stream){el.srcObject=stream;el.play().catch(()=>{});}}}} style={{width:"100%",maxHeight:180,objectFit:"cover",display:"block"}} muted playsInline/>
@@ -3577,7 +3627,7 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
 
           <div style={{display:"flex",gap:8,justifyContent:"space-between"}}>
             <Btn T={T} onClick={()=>setStep(1)}>← Back</Btn>
-            <Btn T={T} v="primary" onClick={()=>setStep(3)} disabled={items.some(i=>!i.name||!i.qty||!i.price)} s={{padding:"12px 28px"}}>Next → Review</Btn>
+            <Btn T={T} v="primary" onClick={()=>setStep(3)} disabled={items.some(i=>!i.name||!i.qty||!i.price||!i.itemPhoto)} s={{padding:"12px 28px"}}>Next → Review</Btn>
           </div>
         </div>
       )}
@@ -4183,6 +4233,9 @@ export default function App(){
   const [devices,setDevices]=useState([]);
   const [loginHistory,setLoginHistory]=useState([]);
   const [auditLog,setAuditLog]=useState([]);
+  // FIX: glassItems lifted to root so GRNModule can search glassware inventory
+  const [glassItems,setGlassItems]=useState([]);
+  const [glassMov,setGlassMov]=useState([]);
   const loginSessionRef=useRef(null);
   const lastActivityRef=useRef(Date.now());
   const SESSION_TIMEOUT_MS=2*60*60*1000;// 2 hours
@@ -4213,7 +4266,7 @@ export default function App(){
   // ── Boot: load from Firebase ──────────────────────────────────────────────
   useEffect(()=>{
     async function boot(){
-      const [si,sm,sc,su,sd,as,th,lh,al]=await Promise.all([
+      const [si,sm,sc,su,sd,as,th,lh,al,gi,gm]=await Promise.all([
         fbLoad("items", DEFAULT_ITEMS),
         fbLoad("movements", []),
         fbLoad("counts", []),
@@ -4223,8 +4276,11 @@ export default function App(){
         fbLoad("theme", false),
         fbLoad("loginHistory", []),
         fbLoad("auditLog", []),
+        fbLoad("glassItems",[]),// FIX: load glassware at root so GRN can access it
+        fbLoad("glassMov",[]),
       ]);
-      setItems(si); setMovements(sm); setCountHistory(sc); setUsers(su); setDevices(sd); setAlertSettings(as); setIsDark(th); setLoginHistory(lh); setAuditLog(al); setIsDark(th);
+      setItems(si);setMovements(sm);setCountHistory(sc);setUsers(su);setDevices(sd);setAlertSettings(as);setIsDark(th);setLoginHistory(lh);setAuditLog(al);setIsDark(th);
+      setGlassItems(gi);setGlassMov(gm);
       setReady(true);
     }
     boot();
@@ -4234,6 +4290,9 @@ export default function App(){
   useFirebasePersist("items",items,ready,v=>fetch("/api/sync-sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:v,movements,countHistory})}));
   useFirebasePersist("movements",movements,ready,v=>fetch("/api/sync-sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items,movements:v,countHistory})}));
   useFirebasePersist("counts",countHistory,ready,v=>fetch("/api/sync-sheets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items,movements,countHistory:v})}));
+  // FIX: persist glassItems at root level so both GlasswareModule and GRNModule share same data
+  useFirebasePersist("glassItems",glassItems,ready);
+  useFirebasePersist("glassMov",glassMov,ready);
   useFirebasePersist("users",users,ready);
   useFirebasePersist("devices",devices,ready);
   useFirebasePersist("loginHistory",loginHistory,ready);
@@ -4382,7 +4441,7 @@ export default function App(){
   );
   if(activeModule==="glassware") return(
     <ThemeContext.Provider value={T}>
-      <GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} setAuditLog={setAuditLog} auditLog={auditLog}/>
+      <GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} setAuditLog={setAuditLog} auditLog={auditLog} glassItems={glassItems} setGlassItems={setGlassItems} glassMov={glassMov} setGlassMov={setGlassMov}/>
     </ThemeContext.Provider>
   );
   if(activeModule==="wastage") return(
@@ -4392,7 +4451,7 @@ export default function App(){
   );
   if(activeModule==="grn") return(
     <ThemeContext.Provider value={T}>
-      <GRNModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} fbItems={items} setFbItems={setItems} glassItems={[]} setGlassItems={()=>{}}/>
+      <GRNModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} fbItems={items} setFbItems={setItems} glassItems={glassItems} setGlassItems={setGlassItems}/>
     </ThemeContext.Provider>
   );
 
