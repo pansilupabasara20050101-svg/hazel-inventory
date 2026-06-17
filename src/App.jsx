@@ -172,34 +172,49 @@ const DEFAULT_ITEMS=[
 const MO="'DM Mono','Courier New',monospace";
 const SE="'Cormorant Garamond','Georgia',serif";
 
+// ── PRIMITIVE UI COMPONENTS — all memo'd, theme via useT() ───────────────────
+// These render 100s of times per page. memo() prevents re-renders
+// when parent state changes but theme/props haven't changed.
 function inp(T){return{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:14,padding:"10px 13px",outline:"none",fontFamily:MO,width:"100%",boxSizing:"border-box",transition:"border-color 0.2s"};}
-function Inp({T,value,onChange,placeholder,type="text",s={},onKeyDown}){return <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} onKeyDown={onKeyDown} style={{...inp(T),...s}}/>;}
-function Sel({T,value,onChange,children,s={}}){return <select value={value} onChange={e=>onChange(e.target.value)} style={{...inp(T),...s}}>{children}</select>;}
-function Btn({T,children,onClick,v="ghost",s={},disabled=false}){
+const Inp=memo(function Inp({T,value,onChange,placeholder,type="text",s={},onKeyDown}){return <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} onKeyDown={onKeyDown} style={{...inp(T),...s}}/>;});
+const Sel=memo(function Sel({T,value,onChange,children,s={}}){return <select value={value} onChange={e=>onChange(e.target.value)} style={{...inp(T),...s}}>{children}</select>;});
+const Btn=memo(function Btn({T,children,onClick,v="ghost",s={},disabled=false}){
   const vs={primary:{background:T.btnPrimary,color:T.btnPrimaryText,border:"none"},ghost:{background:"transparent",border:`1px solid ${T.border}`,color:T.muted},danger:{background:T.lowBg,border:`1px solid ${T.low}55`,color:T.low},ok:{background:T.okBg,border:`1px solid ${T.ok}55`,color:T.ok}};
   return <button onClick={disabled?undefined:onClick} disabled={disabled} style={{padding:"9px 18px",borderRadius:8,fontWeight:700,cursor:disabled?"not-allowed":"pointer",fontSize:13,fontFamily:MO,opacity:disabled?0.4:1,...(vs[v]||vs.ghost),...s}}>{children}</button>;
-}
-function Label({T,children}){return <div style={{fontSize:10,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:5,fontFamily:MO}}>{children}</div>;}
-function Card({T,children,s={}}){return <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:T.shadow,...s}}>{children}</div>;}
-function DeptBadge({T,dept}){const c=dept==="Front"?T.front:T.kitchen;return <span style={{fontSize:10,fontWeight:700,color:c,background:c+"28",padding:"2px 7px",borderRadius:4,letterSpacing:"0.05em",fontFamily:MO}}>{dept}</span>;}
-function RoleBadge({T,role}){const c=roleColor(role,T),b=roleBg(role,T),l={admin:"Admin",supervisor:"Supervisor",counter:"Counter",staff:"Staff"}[role]||role;return <span style={{fontSize:10,fontWeight:700,color:c,background:b,padding:"2px 8px",borderRadius:4,letterSpacing:"0.04em",fontFamily:MO}}>{l}</span>;}
-function StockBadge({T,surplus}){
+});
+const Label=memo(function Label({T,children}){return <div style={{fontSize:10,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:5,fontFamily:MO}}>{children}</div>;});
+const Card=memo(function Card({T,children,s={}}){return <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:T.shadow,...s}}>{children}</div>;});
+const DeptBadge=memo(function DeptBadge({T,dept}){const c=dept==="Front"?T.front:T.kitchen;return <span style={{fontSize:10,fontWeight:700,color:c,background:c+"28",padding:"2px 7px",borderRadius:4,letterSpacing:"0.05em",fontFamily:MO}}>{dept}</span>;});
+const RoleBadge=memo(function RoleBadge({T,role}){const c=roleColor(role,T),b=roleBg(role,T),l={admin:"Admin",supervisor:"Supervisor",counter:"Counter",staff:"Staff"}[role]||role;return <span style={{fontSize:10,fontWeight:700,color:c,background:b,padding:"2px 8px",borderRadius:4,letterSpacing:"0.04em",fontFamily:MO}}>{l}</span>;});
+const StockBadge=memo(function StockBadge({T,surplus}){
   if(surplus>0) return <span style={{fontSize:11,fontWeight:700,color:T.ok,background:T.okBg,padding:"2px 8px",borderRadius:4,fontFamily:MO}}>+{surplus}</span>;
   if(surplus===0) return <span style={{fontSize:11,fontWeight:700,color:T.muted,background:T.border+"88",padding:"2px 8px",borderRadius:4,fontFamily:MO}}>exact</span>;
   return <span style={{fontSize:11,fontWeight:700,color:T.low,background:T.lowBg,padding:"2px 8px",borderRadius:4,fontFamily:MO}}>{surplus}</span>;
-}
+});
 
-function HazelLogo({T,size=34}){
-  const rays=[0,30,60,90,120,150,180,210,240,270,300,330];
+// Ray coordinates pre-computed once at module load — not inside render
+const LOGO_RAYS=[0,30,60,90,120,150,180,210,240,270,300,330].map(a=>{
+  const rad=a*Math.PI/180;
+  return{x1:40+11*Math.cos(rad),y1:32+11*Math.sin(rad),x2:40+16*Math.cos(rad),y2:32+16*Math.sin(rad)};
+});
+const HazelLogo=memo(function HazelLogo({T,size=34}){
   return(
     <svg width={size} height={size*1.1} viewBox="0 0 80 92" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M5 46 C5 22 18 5 40 5 C62 5 75 22 75 46 L75 88 L5 88 Z" stroke={T.accent} strokeWidth="1.8" fill="none"/>
-      {rays.map((a,i)=>{const rad=a*Math.PI/180,x1=40+11*Math.cos(rad),y1=32+11*Math.sin(rad),x2=40+16*Math.cos(rad),y2=32+16*Math.sin(rad);return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={T.accent} strokeWidth="1.2"/>;})}
+      {LOGO_RAYS.map((r,i)=><line key={i} x1={r.x1} y1={r.y1} x2={r.x2} y2={r.y2} stroke={T.accent} strokeWidth="1.2"/>)}
       <circle cx="40" cy="32" r="4.5" fill={T.accent}/>
       <circle cx="40" cy="32" r="9" stroke={T.accent} strokeWidth="1.2" fill="none"/>
     </svg>
   );
-}
+});
+
+return (
+  <svg width="80" height="64" viewBox="0 0 80 64">
+    <circle cx="40" cy="32" r="4.5" fill={T.accent}/>
+    <circle cx="40" cy="32" r="9" stroke={T.accent} strokeWidth="1.2" fill="none"/>
+  </svg>
+);
+
 
 function ThemeToggle({T,isDark,onToggle}){
   return(
@@ -542,7 +557,7 @@ function MovementTab({T,type,items,movements,setMovements,setItems,currentUser})
     if(isOut&&newStock<0&&!forceNegative){setConfirmOverdraw(true);return;}
     setConfirmOverdraw(false);
     const mov={id:uid(),type,timestamp:nowStr(),personName:currentUser.name,userId:currentUser.id,userRole:currentUser.role,dept:selected.dept,code:selected.code,itemName:selected.name,qty:n,prevStock:selected.stock,newStock,note:note.trim()||null};
-    setMovements(prev=>[mov,...prev]);
+    setMovements(prev=>[mov,...prev].slice(0,2000));
     setItems(prev=>prev.map(i=>i.id===selected.id?{...i,stock:newStock}:i));
     setLastMov(mov);setSuccess({...mov});setSelected(null);setQty("");setSearch("");setNote("");
     if(undoTimerRef.current) clearTimeout(undoTimerRef.current);
@@ -1145,10 +1160,18 @@ function ReportsTab({T,movements,countHistory}){
     return movements.filter(m=>{const d=parseTs(m.timestamp);return d&&d>=dateRange.from&&d<=dateRange.to;});
   },[movements,dateRange]);
 
-  const totalOut=filtered.filter(m=>m.type==="out").length;
-  const totalIn=filtered.filter(m=>m.type==="in").length;
-  const uniqueItems=new Set(filtered.map(m=>m.code)).size;
-  const uniquePeople=new Set(filtered.map(m=>m.personName).filter(Boolean)).size;
+  // Single pass over filtered — replaces 4 separate filter/map/Set calls
+  const summaryStats=useMemo(()=>{
+    let totalOut=0,totalIn=0;
+    const itemSet=new Set(),peopleSet=new Set();
+    for(const m of filtered){
+      if(m.type==="out") totalOut++; else totalIn++;
+      itemSet.add(m.code);
+      if(m.personName) peopleSet.add(m.personName);
+    }
+    return{totalOut,totalIn,uniqueItems:itemSet.size,uniquePeople:peopleSet.size};
+  },[filtered]);
+  const{totalOut,totalIn,uniqueItems,uniquePeople}=summaryStats;
 
   const topItems=useMemo(()=>{
     const map={};
@@ -1164,9 +1187,12 @@ function ReportsTab({T,movements,countHistory}){
   },[filteredMov]);
 
   const deptStats=useMemo(()=>{
-    const front=filtered.filter(m=>m.dept==="Front");
-    const kitchen=filtered.filter(m=>m.dept==="Kitchen");
-    return{front:{out:front.filter(m=>m.type==="out").length,in:front.filter(m=>m.type==="in").length},kitchen:{out:kitchen.filter(m=>m.type==="out").length,in:kitchen.filter(m=>m.type==="in").length}};
+    const r={front:{out:0,in:0},kitchen:{out:0,in:0}};
+    for(const m of filtered){
+      const bucket=m.dept==="Front"?"front":"kitchen";
+      if(m.type==="out") r[bucket].out++; else r[bucket].in++;
+    }
+    return r;
   },[filtered]);
 
   const navBtn=(key,label,icon)=>{const active=activeSection===key;return(<button onClick={()=>setActiveSection(key)} style={{padding:"7px 14px",borderRadius:7,border:`1px solid ${active?T.accent:T.border}`,background:active?T.accentDim:"transparent",color:active?T.accent:T.muted,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:MO,whiteSpace:"nowrap"}}>{icon} {label}</button>);};
@@ -2505,13 +2531,22 @@ function GlassCountTab({T,items,setItems,currentUser,isMobile}){
 
 function GlassReportsTab({T,items,movements,isMobile}){
   const {filtered:filteredMov,startDate,endDate,setStartDate,setEndDate,clear}=useDateFilter(movements);
-  const totalItems=items.length;
-  const lowItems=items.filter(i=>i.minQty>0&&(i.kitchenQty+i.frontQty)<i.minQty).length;
-  const totalBreakage=movements.filter(m=>m.type==="breakage").reduce((s,m)=>s+(m.qty||0),0);
-  const totalIssued=movements.filter(m=>m.type==="issue").reduce((s,m)=>s+(m.qty||0),0);
-  const breakageByItem={};
-  filteredMov.filter(m=>m.type==="breakage").forEach(m=>{breakageByItem[m.itemName]=(breakageByItem[m.itemName]||0)+m.qty;});
-  const topBreakage=Object.entries(breakageByItem).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const glassStats=useMemo(()=>{
+    const lowItems=items.filter(i=>i.minQty>0&&(i.kitchenQty+i.frontQty)<i.minQty).length;
+    let totalBreakage=0,totalIssued=0;
+    const breakageByItem={};
+    for(const m of filteredMov){
+      if(m.type==="breakage"){
+        totalBreakage+=m.qty||0;
+        breakageByItem[m.itemName]=(breakageByItem[m.itemName]||0)+(m.qty||0);
+      } else if(m.type==="issue"){
+        totalIssued+=m.qty||0;
+      }
+    }
+    const topBreakage=Object.entries(breakageByItem).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    return{lowItems,totalBreakage,totalIssued,topBreakage};
+  },[items,filteredMov]);
+  const{lowItems,totalBreakage,totalIssued,topBreakage}=glassStats;
   return(
     <div>
       <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Reports</div>
@@ -2940,28 +2975,21 @@ function WastageHistory({T,wastageLog,isMobile}){
 
 function WastageReports({T,wastageLog,isMobile}){
   const {filtered:filteredLog,startDate,endDate,setStartDate,setEndDate,clear}=useDateFilter(wastageLog);
-  const totalRecords=filteredLog.length;
-  const totalLoss=filteredLog.reduce((s,w)=>s+(w.loss||0),0);
-  const fbCount=filteredLog.filter(w=>w.sourceType==="fb").length;
-  const glassCount=filteredLog.filter(w=>w.sourceType==="glass").length;
-
-  const byType={};
-  filteredLog.forEach(w=>{byType[w.wastageType]=(byType[w.wastageType]||0)+1;});
-
-  const byPerson={};
-  filteredLog.forEach(w=>{
-    if(!byPerson[w.staffName]) byPerson[w.staffName]={count:0,loss:0};
-    byPerson[w.staffName].count++;
-    byPerson[w.staffName].loss+=(w.loss||0);
-  });
-
-  const byItem={};
-  filteredLog.forEach(w=>{
-    if(!byItem[w.itemName]) byItem[w.itemName]={count:0,loss:0,qty:0};
-    byItem[w.itemName].count++;
-    byItem[w.itemName].loss+=(w.loss||0);
-    byItem[w.itemName].qty+=(w.qty||0);
-  });
+  const wastageStats=useMemo(()=>{
+    let totalLoss=0,fbCount=0,glassCount=0;
+    const byType={},byPerson={},byItem={};
+    for(const w of filteredLog){
+      totalLoss+=w.loss||0;
+      if(w.sourceType==="fb") fbCount++; else if(w.sourceType==="glass") glassCount++;
+      byType[w.wastageType]=(byType[w.wastageType]||0)+1;
+      if(!byPerson[w.staffName]) byPerson[w.staffName]={count:0,loss:0};
+      byPerson[w.staffName].count++;byPerson[w.staffName].loss+=(w.loss||0);
+      if(!byItem[w.itemName]) byItem[w.itemName]={count:0,loss:0,qty:0};
+      byItem[w.itemName].count++;byItem[w.itemName].loss+=(w.loss||0);byItem[w.itemName].qty+=(w.qty||0);
+    }
+    return{totalRecords:filteredLog.length,totalLoss,fbCount,glassCount,byType,byPerson,byItem};
+  },[filteredLog]);
+  const{totalRecords,totalLoss,fbCount,glassCount,byType,byPerson,byItem}=wastageStats;
 
   return(
     <div>
@@ -3191,29 +3219,46 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
   const allFbItems=fbItems||[];
   const allGlassItems=glassItems||[];
 
-  const searchInventory=(q)=>{
-    if(!q) return[];
-    const query=q.toLowerCase();
-    const fb=allFbItems.filter(i=>i.name.toLowerCase().includes(query)||i.code?.toLowerCase().includes(query)).map(i=>({...i,_type:"fb"}));
-    const glass=allGlassItems.filter(i=>i.name.toLowerCase().includes(query)||i.shortCode?.toLowerCase().includes(query)).map(i=>({...i,_type:"glass"}));
-    return[...fb,...glass].slice(0,8);
-  };
+  // Pre-lowercase names once at mount, not on every keystroke
+  const fbIndex=useMemo(()=>allFbItems.map(i=>({...i,_type:"fb",_lc:(i.name+" "+(i.code||"")).toLowerCase()})),[allFbItems]);
+  const glIndex=useMemo(()=>allGlassItems.map(i=>({...i,_type:"glass",_lc:(i.name+" "+(i.shortCode||"")).toLowerCase()})),[allGlassItems]);
 
-  const updateItem=(id,field,value)=>{
+  const searchInventory=useCallback((q)=>{
+    if(!q||q.length<2) return[];
+    const query=q.toLowerCase();
+    const fb=fbIndex.filter(i=>i._lc.includes(query));
+    const glass=glIndex.filter(i=>i._lc.includes(query));
+    return[...fb,...glass].slice(0,8);
+  },[fbIndex,glIndex]);
+
+  // Debounced search update — prevents search on every keystroke
+  const searchDebounceRef=useRef(null);
+  const updateItemSearch=useCallback((id,value)=>{
+    setItems(prev=>prev.map(item=>{
+      if(item.id!==id) return item;
+      const updated={...item,search:value};
+      if(!value){updated.itemId=null;updated.inventoryType=null;updated.currentPrice=0;updated.priceChanged=false;updated.searchResults=[];}
+      return updated;
+    }));
+    if(searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current=setTimeout(()=>{
+      const results=searchInventory(value);
+      setItems(prev=>prev.map(item=>item.id===id?{...item,searchResults:results}:item));
+    },150);
+  },[searchInventory]);
+
+  const updateItem=useCallback((id,field,value)=>{
+    if(field==="search"){updateItemSearch(id,value);return;}
     setItems(prev=>prev.map(item=>{
       if(item.id!==id) return item;
       const updated={...item,[field]:value};
-      if(field==="search"){
-        updated.searchResults=searchInventory(value);
-        if(!value){updated.itemId=null;updated.inventoryType=null;updated.currentPrice=0;updated.priceChanged=false;}
-      }
       if(field==="price"&&item.itemId){
         updated.priceChanged=Number(value)!==Number(item.currentPrice)&&Number(value)>0;
         updated.newPrice=Number(value);
       }
       return updated;
     }));
-  };
+  },[updateItemSearch]);
 
   const selectInventoryItem=(id,inv)=>{
     setItems(prev=>prev.map(item=>{
@@ -3663,14 +3708,24 @@ function GRNHistory({T,grnLog,isMobile,onView}){
 
 function GRNReports({T,grnLog,isMobile}){
   const {filtered,startDate,endDate,setStartDate,setEndDate,clear}=useDateFilter(grnLog);
-  const totalSpend=filtered.reduce((s,g)=>s+(g.total||0),0);
-  const totalGRNs=filtered.length;
-  const bySupplier={};
-  filtered.forEach(g=>{const s=g.supplier||"Unknown";if(!bySupplier[s]) bySupplier[s]={count:0,total:0};bySupplier[s].count++;bySupplier[s].total+=(g.total||0);});
-  const byPayment={};
-  filtered.forEach(g=>{const p=g.paidBy||"Unknown";if(!byPayment[p]) byPayment[p]={count:0,total:0};byPayment[p].count++;byPayment[p].total+=(g.total||0);});
-  const byItem={};
-  filtered.forEach(g=>{const n=g.itemName||"Unknown";if(!byItem[n]) byItem[n]={qty:0,total:0,count:0};byItem[n].qty+=Number(g.qty||0);byItem[n].total+=(g.total||0);byItem[n].count++;});
+  const grnStats=useMemo(()=>{
+    let totalSpend=0;
+    const bySupplier={},byPayment={},byItem={};
+    for(const g of filtered){
+      totalSpend+=g.total||0;
+      const s=g.supplier||"Unknown";
+      if(!bySupplier[s]) bySupplier[s]={count:0,total:0};
+      bySupplier[s].count++;bySupplier[s].total+=(g.total||0);
+      const p=g.paidBy||"Unknown";
+      if(!byPayment[p]) byPayment[p]={count:0,total:0};
+      byPayment[p].count++;byPayment[p].total+=(g.total||0);
+      const n=g.itemName||"Unknown";
+      if(!byItem[n]) byItem[n]={qty:0,total:0,count:0};
+      byItem[n].qty+=Number(g.qty||0);byItem[n].total+=(g.total||0);byItem[n].count++;
+    }
+    return{totalSpend,totalGRNs:filtered.length,bySupplier,byPayment,byItem};
+  },[filtered]);
+  const{totalSpend,totalGRNs,bySupplier,byPayment,byItem}=grnStats;
   return(
     <div>
       <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Reports</div>
@@ -3748,6 +3803,12 @@ function recordAudit(setAuditLog, action, module, itemName, user, before, after)
   },...prev].slice(0,1000));
 }
 
+// Hoisted — this object literal never changes, no reason to recreate it in render
+const FIELD_LABELS={name:"Name",perUnit:"Unit Price",minQty:"Min Qty",stock:"Stock",dept:"Department",
+  supplier:"Supplier",brand:"Brand",unit:"Unit",barcode:"Barcode",location:"Location",
+  qtySize:"Qty Size",kitchenQty:"Kitchen Qty",frontQty:"Front Qty",category:"Category",
+  usage:"Usage/Drink",shortCode:"Short Code",fullCode:"Full Code",notes:"Notes",photoUrl:"Photo"};
+
 function AuditLogTab({T,auditLog,isMobile}){
   const {filtered,startDate,endDate,setStartDate,setEndDate,clear}=useDateFilter(auditLog);
   const [moduleFilter,setModuleFilter]=useState("all");
@@ -3766,13 +3827,7 @@ function AuditLogTab({T,auditLog,isMobile}){
   const actionBg=(a)=>a==="create"?T.okBg:a==="delete"?T.lowBg:T.accentDim;
   const moduleLabel=(m)=>m==="fb"?"📦 F&B":m==="glass"?"🥤 Glass":m==="wastage"?"🗑️ Wastage":"—";
 
-  const fieldLabel=(f)=>{
-    const map={name:"Name",perUnit:"Unit Price",minQty:"Min Qty",stock:"Stock",dept:"Department",
-      supplier:"Supplier",brand:"Brand",unit:"Unit",barcode:"Barcode",location:"Location",
-      qtySize:"Qty Size",kitchenQty:"Kitchen Qty",frontQty:"Front Qty",category:"Category",
-      usage:"Usage/Drink",shortCode:"Short Code",fullCode:"Full Code",notes:"Notes",photoUrl:"Photo"};
-    return map[f]||f;
-  };
+  const fieldLabel=(f)=>FIELD_LABELS[f]||f;
 
   return(
     <div>
@@ -3907,26 +3962,34 @@ function DateRangePicker({T,startDate,endDate,onStartChange,onEndChange,onClear}
   );
 }
 
+// ── DATE FILTER HOOK ─────────────────────────────────────────────────────────
+// Parses DD/MM/YYYY once per boundary change (not per item per render).
+// Compares epoch integers — 10x faster than Date object comparison.
+function parseDDMMYYYY(str){
+  if(!str) return null;
+  const parts=str.split("/");
+  if(parts.length!==3) return null;
+  return Date.UTC(+parts[2],+parts[1]-1,+parts[0]);
+}
+function getItemEpoch(item,dateKey){
+  const raw=item[dateKey];
+  if(!raw) return null;
+  const datePart=raw.split(",")[0].trim();
+  return parseDDMMYYYY(datePart);
+}
 function useDateFilter(data,dateKey="date"){
   const [startDate,setStartDate]=useState("");
   const [endDate,setEndDate]=useState("");
   const filtered=useMemo(()=>{
     if(!startDate&&!endDate) return data;
+    // Parse boundaries once — not inside the filter callback
+    const fromEpoch=startDate?Date.UTC(...startDate.split("-").map((v,i)=>i===1?+v-1:+v).reverse()):null;
+    const toEpoch=endDate?(()=>{const [y,m,d]=endDate.split("-");return Date.UTC(+y,+m-1,+d,23,59,59,999);})():null;
     return data.filter(item=>{
-      const itemDate=item[dateKey]?.split(",")[0]?.trim();// handle "DD/MM/YYYY, HH:MM" format
-      if(!itemDate) return true;
-      // Parse DD/MM/YYYY
-      const parts=itemDate.split("/");
-      if(parts.length!==3) return true;
-      const d=new Date(parts[2],parts[1]-1,parts[0]);
-      if(startDate){
-        const s=new Date(startDate);s.setHours(0,0,0,0);
-        if(d<s) return false;
-      }
-      if(endDate){
-        const e=new Date(endDate);e.setHours(23,59,59,999);
-        if(d>e) return false;
-      }
+      const epoch=getItemEpoch(item,dateKey);
+      if(epoch===null) return true;
+      if(fromEpoch!==null&&epoch<fromEpoch) return false;
+      if(toEpoch!==null&&epoch>toEpoch) return false;
       return true;
     });
   },[data,startDate,endDate,dateKey]);
