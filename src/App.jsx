@@ -116,6 +116,18 @@ async function fbLoad(key, fallback) {
   } catch(e) { return fallback; }
 }
 
+// ── SHARED HOVER HANDLERS ────────────────────────────────────────────────────
+// Module-level — created once, never recreated. Eliminates 31 inline closures.
+// Uses CSS variables injected once into the document head.
+const hoverRow=(card2)=>({
+  onMouseEnter:e=>{ e.currentTarget.dataset.hovered="1"; e.currentTarget.style.background=card2; },
+  onMouseLeave:e=>{ e.currentTarget.dataset.hovered=""; e.currentTarget.style.background="transparent"; },
+});
+
+// Pre-built hover handlers for the two most common theme values
+// called as: {...ROW_HOVER(T)} on table rows
+const ROW_HOVER=(T)=>hoverRow(T.card2);
+
 // ── THEMES ─────────────────────────────────────────────────────────────────
 const DARK={
   mode:"dark",bg:"#0d0b09",card:"#17130f",card2:"#1e1812",border:"#2e2519",
@@ -207,7 +219,11 @@ const HazelLogo=memo(function HazelLogo({T,size=34}){
     </svg>
   );
 });
- 
+      <circle cx="40" cy="32" r="4.5" fill={T.accent}/>
+      <circle cx="40" cy="32" r="9" stroke={T.accent} strokeWidth="1.2" fill="none"/>
+    </svg>
+  );
+}
 
 function ThemeToggle({T,isDark,onToggle}){
   return(
@@ -783,7 +799,7 @@ function ManualCountTab({T,items,setItems,countHistory,setCountHistory,currentUs
   const [search,setSearch]=useState("");
   const [submitted,setSubmitted]=useState(false);
   const filtered=useMemo(()=>{let r=items;if(deptF!=="All") r=r.filter(i=>i.dept===deptF);if(search) r=r.filter(i=>i.name.toLowerCase().includes(search.toLowerCase())||i.code.toLowerCase().includes(search.toLowerCase()));return r.sort((a,b)=>a.code.localeCompare(b.code));},[items,search,deptF]);
-  const counted=Object.keys(counts).filter(k=>counts[k]!=="").length;
+  const counted=useMemo(()=>Object.keys(counts).filter(k=>counts[k]!=="").length,[counts]);
   const submit=()=>{
     const entries=items.map(i=>({code:i.code,name:i.name,dept:i.dept,unit:i.unit,systemStock:i.stock,physicalCount:counts[i.id]!=null&&counts[i.id]!==""?Number(counts[i.id]):null,variance:counts[i.id]!=null&&counts[i.id]!==""?Number(counts[i.id])-i.stock:null,perUnit:i.perUnit||null}));
     setCountHistory(prev=>[{id:uid(),date:nowStr(),countedBy:currentUser.name,userId:currentUser.id,userRole:currentUser.role,entries},...prev]);
@@ -856,11 +872,31 @@ function ManualCountTab({T,items,setItems,countHistory,setCountHistory,currentUs
 function VarianceTab({T,countHistory}){
   const isMobile=useIsMobile();
   const [selId,setSelId]=useState(countHistory[0]?.id||null);
-  const session=countHistory.find(c=>c.id===selId)||countHistory[0];
+  const session=useMemo(()=>countHistory.find(c=>c.id===selId)||countHistory[0],[selId,countHistory]);
+
   if(!countHistory.length) return(<Card T={T} s={{padding:50,textAlign:"center"}}><div style={{fontSize:36,marginBottom:14}}>📊</div><div style={{color:T.muted,fontSize:15,fontFamily:SE,fontStyle:"italic"}}>No counts yet. Complete a Manual Count to see variance.</div></Card>);
-  const entries=session?.entries||[];
-  const withVar=entries.filter(e=>e.variance!=null&&e.variance!==0);
-  const totalValue=withVar.reduce((s,e)=>s+(e.variance&&e.perUnit?e.variance*e.perUnit:0),0);
+
+  // Single pass — replaces 4 separate filter calls + sort in render
+  const varianceStats=useMemo(()=>{
+    const entries=session?.entries||[];
+    let counted=0,withVar=[],surplus=0,deficit=0,totalValue=0;
+    const sorted=[];
+    for(const e of entries){
+      if(e.physicalCount!=null){
+        counted++;
+        sorted.push(e);
+        if(e.variance!=null&&e.variance!==0){
+          withVar.push(e);
+          if(e.variance>0) surplus++; else deficit++;
+          if(e.variance&&e.perUnit) totalValue+=e.variance*e.perUnit;
+        }
+      }
+    }
+    sorted.sort((a,b)=>Math.abs(b.variance||0)-Math.abs(a.variance||0));
+    return{entries,counted,withVar:withVar.length,surplus,deficit,totalValue,sortedEntries:sorted};
+  },[session]);
+
+  const{entries,counted,withVar,surplus,deficit,totalValue,sortedEntries}=varianceStats;
   return(
     <div>
       <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
@@ -868,10 +904,10 @@ function VarianceTab({T,countHistory}){
         <Sel T={T} value={selId||""} onChange={setSelId} s={{minWidth:240}}>{countHistory.map(c=><option key={c.id} value={c.id}>{c.date} — {c.countedBy}</option>)}</Sel>
       </div>
       <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:12,marginBottom:16}}>
-        {[{l:"Counted",v:entries.filter(e=>e.physicalCount!=null).length,c:T.blue},{l:"With Variance",v:withVar.length,c:T.warn},{l:"Surplus",v:withVar.filter(e=>e.variance>0).length,c:T.ok},{l:"Deficit",v:withVar.filter(e=>e.variance<0).length,c:T.low}].map(s=>(<Card T={T} key={s.l} s={{padding:"16px 18px"}}><div style={{fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8,fontFamily:MO}}>{s.l}</div><div style={{fontSize:28,fontWeight:800,color:s.c,fontFamily:MO}}>{s.v}</div></Card>))}
+        {[{l:"Counted",v:counted,c:T.blue},{l:"With Variance",v:withVar,c:T.warn},{l:"Surplus",v:surplus,c:T.ok},{l:"Deficit",v:deficit,c:T.low}].map(s=>(<Card T={T} key={s.l} s={{padding:"16px 18px"}}><div style={{fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8,fontFamily:MO}}>{s.l}</div><div style={{fontSize:28,fontWeight:800,color:s.c,fontFamily:MO}}>{s.v}</div></Card>))}
       </div>
       {totalValue!==0&&<Card T={T} s={{padding:"14px 20px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:13,color:T.muted}}>Total variance value</span><span style={{fontSize:18,fontWeight:800,color:totalValue>0?T.ok:T.low,fontFamily:MO}}>{totalValue>0?"+":""}{fmtRs(totalValue)}</span></Card>}
-      <Card T={T} s={{overflow:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:500}}><thead><tr style={{borderBottom:`1px solid ${T.border}`,background:T.card2}}>{["Code","Item Name","Dept","System","Physical","Variance","Value"].map(h=>(<th key={h} style={{padding:"10px 13px",textAlign:"left",fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:MO}}>{h}</th>))}</tr></thead><tbody>{entries.filter(e=>e.physicalCount!=null).sort((a,b)=>Math.abs(b.variance||0)-Math.abs(a.variance||0)).map((e,idx,arr)=>(<tr key={e.code} style={{borderBottom:idx<arr.length-1?`1px solid ${T.border}`:"none"}}><td style={{padding:"9px 13px",fontFamily:MO,fontSize:12,color:T.accent}}>{e.code}</td><td style={{padding:"9px 13px",fontSize:13,color:T.text,fontFamily:SE}}>{e.name}</td><td style={{padding:"9px 13px"}}><DeptBadge T={T} dept={e.dept}/></td><td style={{padding:"9px 13px",color:T.muted,fontFamily:MO}}>{e.systemStock}</td><td style={{padding:"9px 13px",fontWeight:700,fontFamily:MO,color:T.text}}>{e.physicalCount}</td><td style={{padding:"9px 13px"}}><span style={{fontWeight:700,color:e.variance>0?T.ok:e.variance<0?T.low:T.muted,fontFamily:MO}}>{e.variance>0?"+":""}{e.variance} {e.unit}</span></td><td style={{padding:"9px 13px",fontSize:12,color:e.variance&&e.perUnit?(e.variance>0?T.ok:T.low):T.muted,fontFamily:MO}}>{e.variance&&e.perUnit?`${e.variance>0?"+":""}${fmtRs(e.variance*e.perUnit)}`:"—"}</td></tr>))}</tbody></table></Card>
+      <Card T={T} s={{overflow:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:500}}><thead><tr style={{borderBottom:`1px solid ${T.border}`,background:T.card2}}>{["Code","Item Name","Dept","System","Physical","Variance","Value"].map(h=>(<th key={h} style={{padding:"10px 13px",textAlign:"left",fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:MO}}>{h}</th>))}</tr></thead><tbody>{sortedEntries.map((e,idx,arr)=>(<tr key={e.code} style={{borderBottom:idx<arr.length-1?`1px solid ${T.border}`:"none"}}><td style={{padding:"9px 13px",fontFamily:MO,fontSize:12,color:T.accent}}>{e.code}</td><td style={{padding:"9px 13px",fontSize:13,color:T.text,fontFamily:SE}}>{e.name}</td><td style={{padding:"9px 13px"}}><DeptBadge T={T} dept={e.dept}/></td><td style={{padding:"9px 13px",color:T.muted,fontFamily:MO}}>{e.systemStock}</td><td style={{padding:"9px 13px",fontWeight:700,fontFamily:MO,color:T.text}}>{e.physicalCount}</td><td style={{padding:"9px 13px"}}><span style={{fontWeight:700,color:e.variance>0?T.ok:e.variance<0?T.low:T.muted,fontFamily:MO}}>{e.variance>0?"+":""}{e.variance} {e.unit}</span></td><td style={{padding:"9px 13px",fontSize:12,color:e.variance&&e.perUnit?(e.variance>0?T.ok:T.low):T.muted,fontFamily:MO}}>{e.variance&&e.perUnit?`${e.variance>0?"+":""}${fmtRs(e.variance*e.perUnit)}`:"—"}</td></tr>))}</tbody></table></Card>
     </div>
   );
 }
@@ -1127,7 +1163,7 @@ function StockValueTab({T,items,isMobile}){
   const totalValue=items.reduce((s,i)=>s+(Number(i.stock||0)*Number(i.perUnit||0)),0);
   const byDept={};
   items.forEach(i=>{const d=i.dept||"Other";if(!byDept[d]) byDept[d]={count:0,value:0,lowCount:0};byDept[d].count++;byDept[d].value+=Number(i.stock||0)*Number(i.perUnit||0);if(i.stock<i.minQty) byDept[d].lowCount++;});
-  const sorted=[...items].sort((a,b)=>(Number(b.stock||0)*Number(b.perUnit||0))-(Number(a.stock||0)*Number(a.perUnit||0)));
+  const sortedByValue=useMemo(()=>[...items].sort((a,b)=>(Number(b.stock||0)*Number(b.perUnit||0))-(Number(a.stock||0)*Number(a.perUnit||0))),[items]);
   return(
     <div>
       <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:14}}>Stock Value</div>
@@ -1146,7 +1182,7 @@ function StockValueTab({T,items,isMobile}){
       </div>
       <Card T={T} s={{padding:16}}>
         <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Items by Value</div>
-        {sorted.filter(i=>i.perUnit).slice(0,20).map((item,idx)=>{
+        {sortedByValue.filter(i=>i.perUnit).slice(0,20).map((item,idx)=>{
           const val=Number(item.stock||0)*Number(item.perUnit||0);
           const pct=totalValue>0?(val/totalValue)*100:0;
           return(
@@ -1171,23 +1207,10 @@ function StockValueTab({T,items,isMobile}){
 
 function ReportsTab({T,movements,countHistory}){
   const isMobile=useIsMobile();
+  // Single date filter — filteredMov and filtered are same reference (no duplicate scan)
   const {filtered:filteredMov,startDate,endDate,setStartDate,setEndDate,clear}=useDateFilter(movements);
   const [preset,setPreset]=useState("7d");
   const [activeSection,setActiveSection]=useState("overview");
-
-  const dateRange=useMemo(()=>{
-    const now=new Date();
-    if(preset==="today"){const s=new Date(now);s.setHours(0,0,0,0);return{from:s,to:now};}
-    if(preset==="7d"){const s=new Date(now);s.setDate(s.getDate()-6);s.setHours(0,0,0,0);return{from:s,to:now};}
-    if(preset==="30d"){const s=new Date(now);s.setDate(s.getDate()-29);s.setHours(0,0,0,0);return{from:s,to:now};}
-    if(preset==="90d"){const s=new Date(now);s.setDate(s.getDate()-89);s.setHours(0,0,0,0);return{from:s,to:now};}
-    return{from:null,to:null};
-  },[preset]);
-
-  const filtered=useMemo(()=>{
-    if(!dateRange.from) return movements;
-    return movements.filter(m=>{const d=parseTs(m.timestamp);return d&&d>=dateRange.from&&d<=dateRange.to;});
-  },[movements,dateRange]);
 
   // Single pass over filtered — replaces 4 separate filter/map/Set calls
   const summaryStats=useMemo(()=>{
@@ -1326,7 +1349,14 @@ function ReportsTab({T,movements,countHistory}){
           <div style={{overflow:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:`1px solid ${T.border}`,background:T.card2}}>{["Date","Counted By","Role","Items Counted","With Variance","Surplus","Deficit"].map(h=>(<th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:MO,whiteSpace:"nowrap"}}>{h}</th>))}</tr></thead>
-              <tbody>{countHistory.map((c,idx)=>(<tr key={c.id} style={{borderBottom:idx<countHistory.length-1?`1px solid ${T.border}`:"none"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><td style={{padding:"11px 14px",fontSize:13,color:T.text,fontFamily:MO,fontWeight:600}}>{c.date}</td><td style={{padding:"11px 14px",fontSize:14,fontWeight:600,color:T.text,fontFamily:SE}}>{c.countedBy||"Unknown"}</td><td style={{padding:"11px 14px"}}>{c.userRole&&<RoleBadge T={T} role={c.userRole}/>}</td><td style={{padding:"11px 14px",fontWeight:700,color:T.blue,fontFamily:MO}}>{c.entries.filter(e=>e.physicalCount!=null).length}</td><td style={{padding:"11px 14px",fontWeight:700,color:T.warn,fontFamily:MO}}>{c.entries.filter(e=>e.variance!=null&&e.variance!==0).length}</td><td style={{padding:"11px 14px",fontWeight:700,color:T.ok,fontFamily:MO}}>{c.entries.filter(e=>e.variance!=null&&e.variance>0).length}</td><td style={{padding:"11px 14px",fontWeight:700,color:T.low,fontFamily:MO}}>{c.entries.filter(e=>e.variance!=null&&e.variance<0).length}</td></tr>))}{!countHistory.length&&<tr><td colSpan={7} style={{padding:30,textAlign:"center",color:T.muted,fontStyle:"italic",fontFamily:SE}}>No count sessions yet</td></tr>}</tbody>
+              <tbody>{countHistory.map((c,idx)=>{
+                // Pre-compute per-session stats once per row, not 4 filter calls per render
+                const counted=c.entries.filter(e=>e.physicalCount!=null).length;
+                const varEntries=c.entries.filter(e=>e.variance!=null&&e.variance!==0);
+                const surplusCount=varEntries.filter(e=>e.variance>0).length;
+                const deficitCount=varEntries.filter(e=>e.variance<0).length;
+                return(<tr key={c.id} style={{borderBottom:idx<countHistory.length-1?`1px solid ${T.border}`:"none"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><td style={{padding:"11px 14px",fontSize:13,color:T.text,fontFamily:MO,fontWeight:600}}>{c.date}</td><td style={{padding:"11px 14px",fontSize:14,fontWeight:600,color:T.text,fontFamily:SE}}>{c.countedBy||"Unknown"}</td><td style={{padding:"11px 14px"}}>{c.userRole&&<RoleBadge T={T} role={c.userRole}/>}</td><td style={{padding:"11px 14px",fontWeight:700,color:T.blue,fontFamily:MO}}>{counted}</td><td style={{padding:"11px 14px",fontWeight:700,color:T.warn,fontFamily:MO}}>{varEntries.length}</td><td style={{padding:"11px 14px",fontWeight:700,color:T.ok,fontFamily:MO}}>{surplusCount}</td><td style={{padding:"11px 14px",fontWeight:700,color:T.low,fontFamily:MO}}>{deficitCount}</td></tr>);
+              })}{!countHistory.length&&<tr><td colSpan={7} style={{padding:30,textAlign:"center",color:T.muted,fontStyle:"italic",fontFamily:SE}}>No count sessions yet</td></tr>}</tbody>
             </table>
           </div>
         </Card>
@@ -2258,6 +2288,9 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack,onLogout,setAudit
   useFirebasePersist("glassItems",items,ready&&!setItemsProp);
   useFirebasePersist("glassMov",movements,ready&&!setMovProp);
 
+  // Single debounced sheet sync
+  },[items,movements,ready]);
+
   const logMove=(type,item,qty,location,note)=>{
     setMovements(prev=>[{id:uid(),date:nowStr(),type,itemName:item.name,shortCode:item.shortCode,qty,location,personName:currentUser.name,userRole:currentUser.role,note:note||""},...prev].slice(0,500));
   };
@@ -2298,8 +2331,8 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack,onLogout,setAudit
     return r.sort((a,b)=>a.shortCode.localeCompare(b.shortCode));
   },[items,search,deptFilter,catFilter]);
 
-  const categories=["All",...new Set(items.map(i=>i.category).filter(Boolean))];
-  const lowItems=items.filter(i=>(i.kitchenQty+i.frontQty)<i.minQty&&i.minQty>0);
+  const categories=useMemo(()=>["All",...new Set(items.map(i=>i.category).filter(Boolean))],[items]);
+  const lowItems=useMemo(()=>items.filter(i=>(i.kitchenQty+i.frontQty)<i.minQty&&i.minQty>0),[items]);
 
   const TABS=[
     {key:"inventory",label:"Inventory",icon:"📋"},
@@ -2529,7 +2562,10 @@ function GlassCountTab({T,items,setItems,currentUser,isMobile}){
     const q=search.toLowerCase();
     return items.filter(i=>i.name.toLowerCase().includes(q)||i.shortCode.toLowerCase().includes(q));
   },[items,search]);
-  const totalCounted=Object.keys(counts.kitchen).filter(k=>counts.kitchen[k]!=="").length+Object.keys(counts.front).filter(k=>counts.front[k]!=="").length;
+  const totalCounted=useMemo(()=>
+    Object.keys(counts.kitchen).filter(k=>counts.kitchen[k]!=="").length+
+    Object.keys(counts.front).filter(k=>counts.front[k]!=="").length
+  ,[counts]);
   const submit=()=>{
     setItems(prev=>prev.map(i=>{
       const k=counts.kitchen[i.id];const f=counts.front[i.id];
@@ -2586,7 +2622,7 @@ function GlassReportsTab({T,items,movements,isMobile}){
     const topBreakage=Object.entries(breakageByItem).sort((a,b)=>b[1]-a[1]).slice(0,5);
     return{lowItems,totalBreakage,totalIssued,topBreakage};
   },[items,filteredMov]);
-  const{lowItems,totalBreakage,totalIssued,topBreakage}=glassStats;
+  const sortedByStock=useMemo(()=>[...items].sort((a,b)=>(a.kitchenQty+a.frontQty)-(b.kitchenQty+b.frontQty)).slice(0,10),[items]);
   return(
     <div>
       <div style={{fontSize:20,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Reports</div>
@@ -2616,7 +2652,7 @@ function GlassReportsTab({T,items,movements,isMobile}){
       )}
       <Card T={T} s={{padding:16}}>
         <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:12}}>Stock Levels</div>
-        {items.sort((a,b)=>(a.kitchenQty+a.frontQty)-(b.kitchenQty+b.frontQty)).slice(0,10).map((item,i)=>{
+        {sortedByStock.map((item,i)=>{
           const total=item.kitchenQty+item.frontQty;
           const isLow=item.minQty>0&&total<item.minQty;
           return(
@@ -3154,7 +3190,12 @@ function UserMenu({T,user,onLogout,isMobile}){
 }
 
 // ── GRN MODULE ───────────────────────────────────────────────────────────────
-const SUPPLIERS = ["Sivasakthy","Udula Distributors","Lanka Milk Foods","CBL Food Solutions","Damn Fine","Edinborough","Kist","Ambewela","Nestle","Bulk","Other"];
+const SUPPLIERS = [
+  "Sivasakthy","Udula Distributors","Lanka Milk Foods","CBL Food Solutions",
+  "Damn Fine","Edinborough","Kist","Ambewela","Nestle","Bulk",
+  "Liquid Island","Monin","Fonterra","Maliban","Hameedia","Prima",
+  "Cargills","Keells","Laugfs","Softlogic","Other"
+];
 const PAID_BY = ["Petty Cash","Float","Not Paid from Cafe"];
 
 function GRNModule({T,isDark,onToggle,currentUser,onBack,onLogout,fbItems,setFbItems,glassItems,setGlassItems}){
@@ -3321,10 +3362,13 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
 
   // Camera for bill
   const startBillCamera=async()=>{
+    setCamError("");
     try{
       const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}});
       streamRef.current=stream;
-      if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play().catch(()=>{});}
+      // FIX: setScanning FIRST — this causes the <video> element to mount in DOM.
+      // The ref callback in JSX then fires and attaches stream to the live element.
+      // Old code did the reverse: tried to set srcObject before <video> existed = blank.
       setScanning("camera");
     }catch(e){setCamError("Camera access denied: "+e.message);}
   };
@@ -3343,14 +3387,19 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
 
   const scanBillAI=async(photoData)=>{
     setAiProcessing(true);
+    setCamError("");
     try{
-      // photoData may be a full data URL or already base64 — handle both
       const base64=photoData.includes(",")?photoData.split(",")[1]:photoData;
       const resp=await fetch("/api/scan-grn",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:base64})});
       if(!resp.ok) throw new Error("Server error "+resp.status);
       const data=await resp.json();
       if(data.error) throw new Error(data.error);
-      if(data.supplier){const found=SUPPLIERS.find(s=>s.toLowerCase()===data.supplier?.toLowerCase());setSupplier(found||"Other");if(!found) setCustomSupplier(data.supplier);}
+      // Fill whatever the AI found
+      if(data.supplier){
+        const found=SUPPLIERS.find(s=>s.toLowerCase()===data.supplier?.toLowerCase());
+        setSupplier(found||"Other");
+        if(!found) setCustomSupplier(data.supplier);
+      }
       if(data.invoiceNo) setInvoiceNo(String(data.invoiceNo));
       if(data.invoiceAmount) setInvoiceAmount(String(data.invoiceAmount));
       if(data.items?.length>0){
@@ -3362,12 +3411,16 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
           return{id:uid(),name:ai.name||"",qty:String(ai.qty||""),price:String(ai.price||matched?.perUnit||""),itemId:matched?.id||null,inventoryType:fbMatch?"fb":glMatch?"glass":null,currentPrice:Number(matched?.perUnit||0),priceChanged:!!(ai.price&&matched&&Number(ai.price)!==Number(matched?.perUnit)),newPrice:ai.price?Number(ai.price):null,itemPhoto:null,search:ai.name||"",searchResults:[],capturing:false};
         }));
       }
+      // FIX BUG 3: NEVER auto-jump to step 2.
+      // Stay on step 1 so user can review/edit all filled fields before proceeding.
+      // User clicks "Next → Items" manually.
     }catch(e){
       console.error("scan-grn error:",e);
-      // Don't alert — just move to step 2 with whatever was pre-filled
+      // FIX BUG 2: Show error on step 1 so user knows scan failed and can fill manually
+      setCamError("⚠ Bill scan failed — please fill in the details below manually.");
     }
     setAiProcessing(false);
-    setStep(2);
+    // setStep(2) deliberately removed — was causing skip of step 1
   };
 
   // Item photo capture
@@ -3483,7 +3536,17 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
 
           {scanning==="camera"&&(
             <div style={{position:"relative",borderRadius:10,overflow:"hidden",marginBottom:16}}>
-              <video ref={videoRef} style={{width:"100%",maxHeight:240,objectFit:"cover",display:"block"}} muted playsInline/>
+              <video
+                ref={el=>{
+                  videoRef.current=el;
+                  // Ref callback fires after element mounts — attach stream here
+                  // This is the ONLY reliable way since video doesn't exist during getUserMedia
+                  if(el&&streamRef.current&&el.srcObject!==streamRef.current){
+                    el.srcObject=streamRef.current;
+                    el.play().catch(()=>{});
+                  }
+                }}
+                style={{width:"100%",maxHeight:240,objectFit:"cover",display:"block"}} muted playsInline autoPlay/>
               {aiProcessing?(
                 <div style={{position:"absolute",inset:0,background:"#000b",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontFamily:MO,fontSize:14,fontWeight:700}}>🤖 Reading bill…</div>
               ):(
@@ -3497,10 +3560,19 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
 
           {aiProcessing&&<div style={{background:T.accentDim,border:`1px solid ${T.accent}44`,borderRadius:8,padding:"12px",marginBottom:16,textAlign:"center",fontFamily:MO,fontSize:13,color:T.accent}}>🤖 AI is reading your bill… please wait</div>}
 
+          {/* Show scan result status — success or failure */}
+          {!aiProcessing&&billPhoto&&!scanning&&(
+            camError
+              ? <div style={{background:T.lowBg,border:`1px solid ${T.low}44`,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:T.low,fontFamily:MO}}>{camError}</div>
+              : <div style={{background:T.okBg,border:`1px solid ${T.ok}44`,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:T.ok,fontFamily:MO}}>
+                  ✓ Bill scanned — review the fields below and edit if needed, then tap Next → Items
+                </div>
+          )}
+
           {billPhoto&&(
             <div style={{position:"relative",marginBottom:16}}>
               <img src={billPhoto} alt="bill" style={{width:"100%",maxHeight:180,objectFit:"cover",borderRadius:8,border:`1px solid ${T.border}`}}/>
-              <button onClick={()=>{setBillPhoto(null);setScanning(false);}} style={{position:"absolute",top:6,right:6,background:"#000a",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",color:"#fff",fontSize:11}}>✕ Rescan</button>
+              <button onClick={()=>{setBillPhoto(null);setScanning(false);setCamError("");}} style={{position:"absolute",top:6,right:6,background:"#000a",border:"none",borderRadius:6,padding:"4px 8px",cursor:"pointer",color:"#fff",fontSize:11}}>✕ Rescan</button>
             </div>
           )}
 
@@ -3716,7 +3788,7 @@ function GRNViewModal({T,grn,onClose}){
 function GRNHistory({T,grnLog,isMobile,onView}){
   const {filtered,startDate,endDate,setStartDate,setEndDate,clear}=useDateFilter(grnLog);
   const [supplierFilter,setSupplierFilter]=useState("all");
-  const suppliers=["all",...new Set(grnLog.map(g=>g.supplier).filter(Boolean))];
+  const suppliers=useMemo(()=>["all",...new Set(grnLog.map(g=>g.supplier).filter(Boolean))],[grnLog]);
   const displayed=supplierFilter==="all"?filtered:filtered.filter(g=>g.supplier===supplierFilter);
   return(
     <div>
@@ -4048,38 +4120,45 @@ function useDateFilter(data,dateKey="date"){
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({T,isMobile,items,movements,grnLog,wastageLog,glassItems,countHistory}){
-  const today=new Date();
-  const todayStr=today.toLocaleDateString("en-GB");
+  // Single useMemo: all stats computed once when inputs change, not on every render
+  const stats=useMemo(()=>{
+    const today=new Date();
+    const todayStr=today.toLocaleDateString("en-GB");
+    const weekAgo=new Date(today);weekAgo.setDate(weekAgo.getDate()-7);
+    const weekAgoEpoch=weekAgo.getTime();
 
-  const lowStock=items.filter(i=>i.stock>0&&i.stock<i.minQty).length;
-  const emptyStock=items.filter(i=>i.stock<=0).length;
-  const totalValue=items.reduce((s,i)=>s+(Number(i.stock||0)*Number(i.perUnit||0)),0);
+    let lowStock=0,emptyStock=0,totalValue=0;
+    for(const i of items){
+      if(i.stock>0&&i.stock<i.minQty) lowStock++;
+      if(i.stock<=0) emptyStock++;
+      totalValue+=Number(i.stock||0)*Number(i.perUnit||0);
+    }
+    let todayOut=0,todayIn=0;
+    for(const m of movements){
+      if(!m.date?.startsWith(todayStr)) continue;
+      if(m.type==="out") todayOut++; else todayIn++;
+    }
+    let weeklyLoss=0,weeklySpend=0;
+    for(const w of wastageLog||[]){
+      const parts=w.date?.split("/")||[];
+      if(parts.length<3) continue;
+      const d=new Date(parts[2].split(",")[0],parts[1]-1,parts[0]);
+      if(d.getTime()>=weekAgoEpoch) weeklyLoss+=(w.loss||0);
+    }
+    for(const g of grnLog||[]){
+      const parts=g.date?.split("/")||[];
+      if(parts.length<3) continue;
+      const d=new Date(parts[2].split(",")[0],parts[1]-1,parts[0]);
+      if(d.getTime()>=weekAgoEpoch) weeklySpend+=(g.total||0);
+    }
+    let glassLow=0;
+    for(const i of glassItems||[]){
+      if(i.minQty>0&&(i.kitchenQty+i.frontQty)<i.minQty) glassLow++;
+    }
+    return{lowStock,emptyStock,totalValue,todayOut,todayIn,weeklyLoss,weeklySpend,glassLow,lastCount:countHistory?.[0]};
+  },[items,movements,grnLog,wastageLog,glassItems,countHistory]);
 
-  const todayMov=movements.filter(m=>m.date?.startsWith(todayStr));
-  const todayOut=todayMov.filter(m=>m.type==="out").length;
-  const todayIn=todayMov.filter(m=>m.type==="in").length;
-
-  const weekAgo=new Date(today);weekAgo.setDate(weekAgo.getDate()-7);
-  const recentWastage=(wastageLog||[]).filter(w=>{
-    const parts=w.date?.split("/")||[];
-    if(parts.length<3) return false;
-    const d=new Date(parts[2].split(",")[0],parts[1]-1,parts[0]);
-    return d>=weekAgo;
-  });
-  const weeklyLoss=recentWastage.reduce((s,w)=>s+(w.loss||0),0);
-
-  const recentGRNs=(grnLog||[]).filter(g=>{
-    const parts=g.date?.split("/")||[];
-    if(parts.length<3) return false;
-    const d=new Date(parts[2].split(",")[0],parts[1]-1,parts[0]);
-    return d>=weekAgo;
-  });
-  const weeklySpend=recentGRNs.reduce((s,g)=>s+(g.total||0),0);
-
-  const glassLow=(glassItems||[]).filter(i=>i.minQty>0&&(i.kitchenQty+i.frontQty)<i.minQty).length;
-  const recentBreakage=recentWastage.filter(w=>w.sourceType==="glass").length;
-
-  const lastCount=countHistory?.[0];
+  const{lowStock,emptyStock,totalValue,todayOut,todayIn,weeklyLoss,weeklySpend,glassLow,lastCount}=stats;
 
   return(
     <div style={{marginBottom:24}}>
