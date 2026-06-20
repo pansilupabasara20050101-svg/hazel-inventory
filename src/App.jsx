@@ -548,6 +548,7 @@ function MovementTab({T,type,items,movements,setMovements,setItems,currentUser})
   const [success,setSuccess]=useState(null);
   const [confirmOverdraw,setConfirmOverdraw]=useState(false);
   const [undoCountdown,setUndoCountdown]=useState(0);
+  const undoTimerRef=useRef(null);// was accidentally removed during BUG18 fix
   const countdownRef=useRef(null);
   const [lastMov,setLastMov]=useState(null);
   const [showCam,setShowCam]=useState(false);
