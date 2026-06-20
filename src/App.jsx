@@ -2898,9 +2898,11 @@ function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile})
   const effectiveLoss=manualLoss!==""?Number(manualLoss):autoLoss;
   const effectiveWastageType=wastageType==="Other"&&otherDesc?`Other: ${otherDesc}`:wastageType;
 
+  // Free Entry: only name, qty and loss required — photo/explanation optional (quick kitchen note)
+  // Inventory: selected item + qty + explanation required. Photo required for evidence. Loss required.
   const canSubmit=entryMode==="free"
-    ?freeItemName&&explanation&&photoUrl&&freeLoss!==""
-    :selected&&qty>=1&&explanation&&photoUrl&&(wastageType!=="Other"||otherDesc);
+    ?freeItemName&&qty>=1&&freeLoss!==""&&(wastageType!=="Other"||otherDesc)
+    :selected&&qty>=1&&explanation&&photoUrl&&effectiveLoss>=0&&(wastageType!=="Other"||otherDesc);
 
   const startCamera=async()=>{
     setCamError("");
@@ -2984,6 +2986,10 @@ function WastageForm({T,currentUser,fbItems,glassItems,onClose,onSave,isMobile})
               <Label T={T}>Cost / Loss (Rs) <span style={{color:T.low,fontWeight:400,fontSize:10}}>* required</span></Label>
               <Inp T={T} type="number" value={freeLoss} onChange={setFreeLoss} placeholder="Enter estimated loss amount"/>
               {freeLoss===""&&<div style={{fontSize:10,color:T.low,fontFamily:MO,marginTop:3}}>⚠ Cost/loss is required</div>}
+            </div>
+            <div style={{gridColumn:"1/-1"}}>
+              <Label T={T}>Explanation <span style={{fontWeight:400,textTransform:"none",letterSpacing:0,fontSize:10,color:T.muted,opacity:0.7}}>(optional)</span></Label>
+              <Inp T={T} value={explanation} onChange={setExplanation} placeholder="e.g. Leftover from lunch service, not sold…"/>
             </div>
           </div>
         )}
