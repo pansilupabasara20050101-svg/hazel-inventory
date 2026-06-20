@@ -219,11 +219,6 @@ const HazelLogo=memo(function HazelLogo({T,size=34}){
     </svg>
   );
 });
-      <circle cx="40" cy="32" r="4.5" fill={T.accent}/>
-      <circle cx="40" cy="32" r="9" stroke={T.accent} strokeWidth="1.2" fill="none"/>
-    </svg>
-  );
-}
 
 function ThemeToggle({T,isDark,onToggle}){
   return(
@@ -469,7 +464,10 @@ function LoginScreen({T,isDark,onToggle,users,setUsers,onLogin}){
   const doRecovery=()=>{
     if(newPw.length<6){setError("Password must be at least 6 characters.");return;}
     if(newPw!==confirmPw){setError("Passwords do not match.");return;}
-    setUsers(prev=>prev.map(u=>u.role==="admin"?{...u,password:newPw}:u));
+    // BUG5 FIX: only reset the FIRST admin found, not ALL admin accounts
+    const adminUser=users.find(u=>u.role==="admin"&&u.active);
+    if(!adminUser){setError("No active admin account found.");return;}
+    setUsers(prev=>prev.map(u=>u.id===adminUser.id?{...u,password:newPw}:u));
     setRecoveryDone(true);setError("");
     setTimeout(()=>{setShowRecovery(false);setRecoveryDone(false);setNewPw("");setConfirmPw("");setUsername("");},2000);
   };
@@ -549,15 +547,18 @@ function MovementTab({T,type,items,movements,setMovements,setItems,currentUser})
   const [note,setNote]=useState("");
   const [success,setSuccess]=useState(null);
   const [confirmOverdraw,setConfirmOverdraw]=useState(false);
-  // useRef not useState — timer ID never needs to trigger a re-render
-  const undoTimerRef=useRef(null);
+  const [undoCountdown,setUndoCountdown]=useState(0);
+  const countdownRef=useRef(null);
   const [lastMov,setLastMov]=useState(null);
   const [showCam,setShowCam]=useState(false);
   const [showAI,setShowAI]=useState(false);
   const isMobile=useIsMobile();
   const isOut=type==="out";
 
-  useEffect(()=>()=>{if(undoTimerRef.current) clearTimeout(undoTimerRef.current);},[]);
+  useEffect(()=>()=>{
+    if(undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    if(countdownRef.current) clearInterval(countdownRef.current);
+  },[]);
 
   const doPost=(forceNegative=false)=>{
     if(!selected||!qty||Number(qty)<=0) return;
@@ -570,14 +571,19 @@ function MovementTab({T,type,items,movements,setMovements,setItems,currentUser})
     setItems(prev=>prev.map(i=>i.id===selected.id?{...i,stock:newStock}:i));
     setLastMov(mov);setSuccess({...mov});setSelected(null);setQty("");setSearch("");setNote("");
     if(undoTimerRef.current) clearTimeout(undoTimerRef.current);
-    undoTimerRef.current=setTimeout(()=>{setLastMov(null);setSuccess(null);},60000);
+    if(countdownRef.current) clearInterval(countdownRef.current);
+    setUndoCountdown(60);
+    countdownRef.current=setInterval(()=>setUndoCountdown(p=>{if(p<=1){clearInterval(countdownRef.current);return 0;}return p-1;}),1000);
+    undoTimerRef.current=setTimeout(()=>{setLastMov(null);setSuccess(null);setUndoCountdown(0);},60000);
   };
 
   const doUndo=()=>{
     if(!lastMov) return;
     setItems(prev=>prev.map(i=>i.code===lastMov.code?{...i,stock:lastMov.prevStock}:i));
     setMovements(prev=>prev.filter(m=>m.id!==lastMov.id));
-    setLastMov(null);setSuccess(null);if(undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setLastMov(null);setSuccess(null);setUndoCountdown(0);
+    if(undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    if(countdownRef.current) clearInterval(countdownRef.current);
   };
 
   const recent=movements.filter(m=>m.type===type).slice(0,30);
@@ -637,13 +643,13 @@ function MovementTab({T,type,items,movements,setMovements,setItems,currentUser})
           )}
           <div>
             <Label T={T}>Note <span style={{fontWeight:400,textTransform:"none",letterSpacing:0,opacity:0.6}}>(optional)</span></Label>
-            <Inp T={T} value={note} onChange={setNote} placeholder={isOut?"e.g. Used for catering order…":"e.g. Delivery from Sivasakthy…"} onKeyDown={e=>e.key==="Enter"&&doPost()}/>
+            <Inp T={T} value={note} onChange={setNote} placeholder={isOut?"e.g. Used for catering order…":"e.g. Delivery from Sivasakthy…"}/>
           </div>
           <Btn T={T} v={isOut?"danger":"ok"} onClick={()=>doPost()} disabled={!selected||!qty||Number(qty)<=0} s={{width:"100%",padding:"13px",fontSize:14,letterSpacing:"0.06em"}}>{isOut?"↑ Record Stock Out":"↓ Record Stock In"}</Btn>
           {success&&(
             <div style={{background:T.okBg,border:`1px solid ${T.ok}44`,borderRadius:8,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
               <div style={{fontSize:12,color:T.ok,fontFamily:MO}}>✓ {success.qty}× {success.itemName} — now: {success.newStock}{success.note&&<span style={{color:T.muted}}> · {success.note}</span>}</div>
-              {lastMov&&<button onClick={doUndo} style={{flexShrink:0,padding:"4px 10px",borderRadius:6,border:`1px solid ${T.warn}55`,background:T.warnBg,color:T.warn,cursor:"pointer",fontFamily:MO,fontSize:11,fontWeight:700}}>↺ Undo</button>}
+              {lastMov&&<button onClick={doUndo} style={{flexShrink:0,padding:"4px 10px",borderRadius:6,border:`1px solid ${T.warn}55`,background:T.warnBg,color:T.warn,cursor:"pointer",fontFamily:MO,fontSize:11,fontWeight:700}}>↺ Undo {undoCountdown>0?`(${undoCountdown}s)`:""}</button>}
             </div>
           )}
         </div>
@@ -711,7 +717,7 @@ function ItemModal({T,item,onClose,onSave}){
   );
 }
 
-function InventoryTab({T,items,setItems,canEdit}){
+function InventoryTab({T,items,setItems,canEdit,setAuditLog,currentUser}){
   const isMobile=useIsMobile();
   const [search,setSearch]=useState("");
   const [deptF,setDeptF]=useState("All");
@@ -1012,9 +1018,16 @@ function CreatorStamp({T}){
 }
 
 // ── PURCHASE ORDER ────────────────────────────────────────────────────────────
-function PurchaseOrderTab({T,items,alertSettings}){
+function PurchaseOrderTab({T,items,alertSettings,onConfigure}){
   const isMobile=useIsMobile();
-  const [overrides,setOverrides]=useState({});
+  // BUG17 FIX: useRef persists overrides across tab switches — useState resets on unmount
+  const overridesRef=useRef({});
+  const [overrides,setOverridesState]=useState({});
+  const setOverrides=(fn)=>{
+    const next=typeof fn==="function"?fn(overridesRef.current):fn;
+    overridesRef.current=next;
+    setOverridesState(next);
+  };
   const [groupBySupplier,setGroupBySupplier]=useState(false);
   const [emailSending,setEmailSending]=useState(false);
   const [emailSent,setEmailSent]=useState(false);
@@ -1031,7 +1044,11 @@ function PurchaseOrderTab({T,items,alertSettings}){
   },[deficitItems,groupBySupplier]);
 
   const emailPO=async()=>{
-    if(!alertSettings?.email1){onConfigure();return;}
+    if(!alertSettings?.email1){
+      if(onConfigure) onConfigure();
+      else setEmailError("No email configured — tap 🔔 to set one.");
+      return;
+    }
     setEmailSending(true);setEmailError("");
     try{
       const lines=deficitItems.map(i=>{const q=getQty(i);return`  • ${i.name} (${i.code}) — need: ${q} ${i.unit}, supplier: ${i.supplier||"—"}`;}).join("\n");
@@ -1429,7 +1446,15 @@ function LowStockAlertBanner({T,alertItems,alertSettings,onDismiss,onConfigure})
       const res=await fetch("/api/send-alert",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({to1:alertSettings.email1,to2:alertSettings.email2,count:alertItems.length,lines,timestamp:nowStr()}),
+        body:JSON.stringify({
+          to1:alertSettings.email1,
+          to2:alertSettings.email2,
+          count:alertItems.length,
+          lines,
+          timestamp:nowStr(),
+          // BUG1 FIX: was missing — email table was blank without this
+          items:alertItems.map(i=>({name:i.name,code:i.code,unit:i.unit,qtySize:i.qtySize||"",stock:i.stock,minQty:i.minQty,supplier:i.supplier||""}))
+        }),
       });
       if(!res.ok) throw new Error("Server error "+res.status);
       setSent(true);setTimeout(()=>{setSent(false);onDismiss();},3000);
@@ -2288,7 +2313,15 @@ function GlasswareModule({T,isDark,onToggle,currentUser,onBack,onLogout,setAudit
   useFirebasePersist("glassItems",items,ready&&!setItemsProp);
   useFirebasePersist("glassMov",movements,ready&&!setMovProp);
 
-  // Single debounced sheet sync
+  // Single debounced sheet sync when items OR movements change
+  const glassSyncRef=useRef(null);
+  useEffect(()=>{
+    if(!ready) return;
+    if(glassSyncRef.current) clearTimeout(glassSyncRef.current);
+    glassSyncRef.current=setTimeout(()=>{
+      fetch("/api/sync-glassware",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items,movements})}).catch(()=>{});
+    },1500);
+    return()=>{if(glassSyncRef.current) clearTimeout(glassSyncRef.current);};
   },[items,movements,ready]);
 
   const logMove=(type,item,qty,location,note)=>{
@@ -2668,12 +2701,16 @@ function GlassReportsTab({T,items,movements,isMobile}){
 }
 
 // ── WASTAGE MODULE ───────────────────────────────────────────────────────────
-function WastageModule({T,isDark,onToggle,currentUser,onBack,onLogout,fbItems,glassItems,setFbItems,setGlassItems}){
+function WastageModule({T,isDark,onToggle,currentUser,onBack,onLogout,fbItems,glassItems,setFbItems,setGlassItems,wastageLog:wastageLogProp,setWastageLog:setWastageLogProp}){
   const isMobile=useIsMobile();
-  const [wastageLog,setWastageLog]=useState([]);
+  const [localWastageLog,setLocalWastageLog]=useState([]);
   const [ready,setReady]=useState(false);
   const [tab,setTab]=useState("record");
   const [showForm,setShowForm]=useState(false);
+
+  // Use root state if provided, else local
+  const wastageLog=setWastageLogProp?wastageLogProp:localWastageLog;
+  const setWastageLog=setWastageLogProp||setLocalWastageLog;
 
   const canViewHistory=["admin","supervisor","counter"].includes(currentUser.role);
   const canViewReports=["admin","supervisor"].includes(currentUser.role);
@@ -3146,7 +3183,8 @@ function UserMenu({T,user,onLogout,isMobile}){
   const [open,setOpen]=useState(false);
   const ref=useRef(null);
   const initials=user.name.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
-  const roleColor=ROLES[user.role]?.color||T.accent;
+  // BUG12 FIX: ROLES[user.role]?.color doesn't exist — use roleColor() helper
+  const avatarColor=roleColor(user.role,T);
 
   useEffect(()=>{
     const handler=e=>{if(ref.current&&!ref.current.contains(e.target)) setOpen(false);};
@@ -3159,7 +3197,7 @@ function UserMenu({T,user,onLogout,isMobile}){
     <div ref={ref} style={{position:"relative"}}>
       <button onClick={()=>setOpen(p=>!p)} style={{display:"flex",alignItems:"center",gap:7,background:T.card,border:`1px solid ${open?T.accent:T.border}`,borderRadius:20,padding:"4px 10px 4px 4px",cursor:"pointer",transition:"all 0.15s"}}>
         {/* Avatar circle */}
-        <div style={{width:28,height:28,borderRadius:"50%",background:roleColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff",fontFamily:MO,flexShrink:0}}>{initials}</div>
+        <div style={{width:28,height:28,borderRadius:"50%",background:avatarColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff",fontFamily:MO,flexShrink:0}}>{initials}</div>
         {/* Name — hidden on very small screens */}
         <span style={{fontSize:12,color:T.text,fontWeight:600,fontFamily:SE,maxWidth:isMobile?70:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.name}</span>
         <span style={{fontSize:9,color:T.muted,transform:open?"rotate(180deg)":"none",transition:"transform 0.2s"}}>▼</span>
@@ -3170,7 +3208,7 @@ function UserMenu({T,user,onLogout,isMobile}){
           {/* User info */}
           <div style={{padding:"14px 16px",borderBottom:`1px solid ${T.border}`,background:T.card2}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <div style={{width:36,height:36,borderRadius:"50%",background:roleColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:"#fff",fontFamily:MO}}>{initials}</div>
+              <div style={{width:36,height:36,borderRadius:"50%",background:avatarColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:"#fff",fontFamily:MO}}>{initials}</div>
               <div>
                 <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:SE}}>{user.name}</div>
                 <div style={{marginTop:2}}><RoleBadge T={T} role={user.role}/></div>
@@ -3198,12 +3236,16 @@ const SUPPLIERS = [
 ];
 const PAID_BY = ["Petty Cash","Float","Not Paid from Cafe"];
 
-function GRNModule({T,isDark,onToggle,currentUser,onBack,onLogout,fbItems,setFbItems,glassItems,setGlassItems}){
+function GRNModule({T,isDark,onToggle,currentUser,onBack,onLogout,fbItems,setFbItems,glassItems,setGlassItems,grnLog:grnLogProp,setGrnLog:setGrnLogProp}){
   const isMobile=useIsMobile();
-  const [grnLog,setGrnLog]=useState([]);
+  const [localGrnLog,setLocalGrnLog]=useState([]);
   const [ready,setReady]=useState(false);
   const [tab,setTab]=useState("new");
   const [viewGRN,setViewGRN]=useState(null);
+
+  // Use root state if provided, else local
+  const grnLog=setGrnLogProp?grnLogProp:localGrnLog;
+  const setGrnLog=setGrnLogProp||setLocalGrnLog;
 
   const canViewHistory=["admin","supervisor","counter"].includes(currentUser.role);
   const canViewReports=["admin","supervisor"].includes(currentUser.role);
@@ -3447,13 +3489,46 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
     setItems(prev=>prev.map(i=>i.id===id?{...i,itemPhoto:dataUrl,capturing:false}:i));
   };
 
-  const submit=()=>{
-    const baseHeader={date:nowStr(),staffName:currentUser.name,userRole:currentUser.role,supplier:supplier==="Other"?customSupplier:supplier,invoiceNo,invoiceAmount:Number(invoiceAmount)||0,paidBy,billPhoto};
-    const grns=items.map(item=>({...baseHeader,id:uid(),itemName:item.name,qty:Number(item.qty||0),price:Number(item.price||0),total:Number(item.qty||0)*Number(item.price||0),itemId:item.itemId,inventoryType:item.inventoryType,currentPrice:item.currentPrice,priceChanged:item.priceChanged,newPrice:item.newPrice,itemPhoto:item.itemPhoto}));
+  const compressToThumbnail=(dataUrl,maxW=200,quality=0.4)=>{
+    return new Promise(resolve=>{
+      if(!dataUrl||!dataUrl.startsWith("data:")) return resolve(null);
+      const img=new Image();
+      img.onload=()=>{
+        const scale=Math.min(1,maxW/img.width);
+        const canvas=document.createElement("canvas");
+        canvas.width=img.width*scale;canvas.height=img.height*scale;
+        canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
+        resolve(canvas.toDataURL("image/jpeg",quality));
+      };
+      img.onerror=()=>resolve(null);
+      img.src=dataUrl;
+    });
+  };
+
+  const submit=async()=>{
+    // BUG3 FIX: compress photos before saving to Firestore.
+    // Full base64 photos easily exceed Firestore's 1MB per-document limit.
+    // Thumbnails (200px, q=0.4) are ~5-15KB vs ~500KB+ for raw camera photos.
+    const billThumb=await compressToThumbnail(billPhoto);
+    const baseHeader={date:nowStr(),staffName:currentUser.name,userRole:currentUser.role,supplier:supplier==="Other"?customSupplier:supplier,invoiceNo,invoiceAmount:Number(invoiceAmount)||0,paidBy,billPhoto:billThumb};
+    // Compress each item photo before saving
+    const grns=await Promise.all(items.map(async item=>({
+      ...baseHeader,
+      id:uid(),
+      itemName:item.name,
+      qty:Number(item.qty||0),
+      price:Number(item.price||0),
+      total:Number(item.qty||0)*Number(item.price||0),
+      itemId:item.itemId,
+      inventoryType:item.inventoryType,
+      currentPrice:item.currentPrice,
+      priceChanged:item.priceChanged,
+      newPrice:item.newPrice,
+      // BUG3 FIX: compress item photo too, not full base64
+      itemPhoto:await compressToThumbnail(item.itemPhoto),
+    })));
     
-    // Build summary
     const summary=grns.map(g=>({name:g.itemName,inventoryType:g.inventoryType,qty:g.qty,total:g.total,priceChanged:g.priceChanged,newPrice:g.newPrice,currentPrice:g.currentPrice}));
-    
     onSave(grns);
     setSubmitSummary(summary);
     setSubmitted(true);
@@ -4135,7 +4210,10 @@ function Dashboard({T,isMobile,items,movements,grnLog,wastageLog,glassItems,coun
     }
     let todayOut=0,todayIn=0;
     for(const m of movements){
-      if(!m.date?.startsWith(todayStr)) continue;
+      // BUG7 FIX: movements store date in m.timestamp (e.g. "18/06/2026, 14:32")
+      // not m.date — m.date is used by glassware/wastage/grn, not F&B movements
+      const mDate=m.timestamp||m.date||"";
+      if(!mDate.startsWith(todayStr)) continue;
       if(m.type==="out") todayOut++; else todayIn++;
     }
     let weeklyLoss=0,weeklySpend=0;
@@ -4197,7 +4275,7 @@ function Dashboard({T,isMobile,items,movements,grnLog,wastageLog,glassItems,coun
       </div>
 
       {/* Recent activity */}
-      {(movements.length>0||recentGRNs.length>0)&&(
+      {movements.length>0&&(
         <div style={{background:T.card,borderRadius:10,padding:"14px 16px",border:`1px solid ${T.border}`}}>
           <div style={{fontSize:11,fontWeight:700,color:T.muted,fontFamily:MO,letterSpacing:"0.08em",marginBottom:10}}>RECENT ACTIVITY</div>
           {movements.slice(0,3).map((m,i)=>(
@@ -4206,7 +4284,8 @@ function Dashboard({T,isMobile,items,movements,grnLog,wastageLog,glassItems,coun
                 <span style={{fontSize:11,fontWeight:700,fontFamily:MO,color:m.type==="out"?T.low:T.ok,marginRight:6}}>{m.type==="out"?"↑":"↓"}</span>
                 <span style={{fontSize:12,color:T.text,fontFamily:SE}}>{m.itemName}</span>
               </div>
-              <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{m.personName} · {m.date?.split(",")[1]||""}</div>
+              {/* BUG9 FIX: movements use m.timestamp not m.date */}
+              <div style={{fontSize:11,color:T.muted,fontFamily:MO}}>{m.personName} · {(m.timestamp||m.date||"").split(",")[1]?.trim()||""}</div>
             </div>
           ))}
           {lastCount&&(
@@ -4315,6 +4394,9 @@ export default function App(){
   // FIX: glassItems lifted to root so GRNModule can search glassware inventory
   const [glassItems,setGlassItems]=useState([]);
   const [glassMov,setGlassMov]=useState([]);
+  // FIX BUG8: grnLog and wastageLog lifted to root so Dashboard always has real data
+  const [grnLog,setGrnLog]=useState([]);
+  const [wastageLog,setWastageLog]=useState([]);
   const loginSessionRef=useRef(null);
   const lastActivityRef=useRef(Date.now());
   const SESSION_TIMEOUT_MS=2*60*60*1000;// 2 hours
@@ -4345,7 +4427,7 @@ export default function App(){
   // ── Boot: load from Firebase ──────────────────────────────────────────────
   useEffect(()=>{
     async function boot(){
-      const [si,sm,sc,su,sd,as,th,lh,al,gi,gm]=await Promise.all([
+      const [si,sm,sc,su,sd,as,th,lh,al,gi,gm,gl,wl]=await Promise.all([
         fbLoad("items", DEFAULT_ITEMS),
         fbLoad("movements", []),
         fbLoad("counts", []),
@@ -4355,11 +4437,15 @@ export default function App(){
         fbLoad("theme", false),
         fbLoad("loginHistory", []),
         fbLoad("auditLog", []),
-        fbLoad("glassItems",[]),// FIX: load glassware at root so GRN can access it
+        fbLoad("glassItems",[]),
         fbLoad("glassMov",[]),
+        fbLoad("grnLog",[]),   // BUG8 FIX: load at root for Dashboard
+        fbLoad("wastageLog",[]), // BUG8 FIX: load at root for Dashboard
       ]);
-      setItems(si);setMovements(sm);setCountHistory(sc);setUsers(su);setDevices(sd);setAlertSettings(as);setIsDark(th);setLoginHistory(lh);setAuditLog(al);setIsDark(th);
+      setItems(si);setMovements(sm);setCountHistory(sc);setUsers(su);setDevices(sd);setAlertSettings(as);setLoginHistory(lh);setAuditLog(al);
+      setIsDark(th);// BUG10 FIX: was called twice (setIsDark(th) appeared twice)
       setGlassItems(gi);setGlassMov(gm);
+      setGrnLog(gl);setWastageLog(wl);
       setReady(true);
     }
     boot();
@@ -4515,7 +4601,7 @@ export default function App(){
   );
   if(!activeModule) return(
     <ThemeContext.Provider value={T}>
-      <ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m,tab)=>{setInitialTab(tab||null);setActiveModule(m);}} onLogout={handleLogout} items={items} movements={movements} grnLog={[]} wastageLog={[]} glassItems={[]} countHistory={countHistory}/>
+      <ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m,tab)=>{setInitialTab(tab||null);setActiveModule(m);}} onLogout={handleLogout} items={items} movements={movements} grnLog={grnLog} wastageLog={wastageLog} glassItems={glassItems} countHistory={countHistory}/>
     </ThemeContext.Provider>
   );
   if(activeModule==="glassware") return(
@@ -4525,12 +4611,12 @@ export default function App(){
   );
   if(activeModule==="wastage") return(
     <ThemeContext.Provider value={T}>
-      <WastageModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} fbItems={items} glassItems={[]} setFbItems={setItems} setGlassItems={()=>{}}/>
+      <WastageModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} fbItems={items} glassItems={glassItems} setFbItems={setItems} setGlassItems={setGlassItems} wastageLog={wastageLog} setWastageLog={setWastageLog}/>
     </ThemeContext.Provider>
   );
   if(activeModule==="grn") return(
     <ThemeContext.Provider value={T}>
-      <GRNModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} fbItems={items} setFbItems={setItems} glassItems={glassItems} setGlassItems={setGlassItems}/>
+      <GRNModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} fbItems={items} setFbItems={setItems} glassItems={glassItems} setGlassItems={setGlassItems} grnLog={grnLog} setGrnLog={setGrnLog}/>
     </ThemeContext.Provider>
   );
 
@@ -4575,10 +4661,10 @@ export default function App(){
         {alertBanner.length>0&&<LowStockAlertBanner T={T} alertItems={alertBanner} alertSettings={alertSettings} onDismiss={()=>setAlertBanner([])} onConfigure={()=>setShowAlertSettings(true)}/>}
         {safeTab==="out"  &&<MovementTab T={T} type="out" items={items} movements={movements} setMovements={setMovements} setItems={setItems} currentUser={currentUser}/>}
         {safeTab==="in"   &&<MovementTab T={T} type="in"  items={items} movements={movements} setMovements={setMovements} setItems={setItems} currentUser={currentUser}/>}
-        {safeTab==="inv"  &&<InventoryTab T={T} items={items} setItems={setItems} canEdit={role.canEditItems}/>}
+        {safeTab==="inv"  &&<InventoryTab T={T} items={items} setItems={setItems} canEdit={role.canEditItems} setAuditLog={setAuditLog} currentUser={currentUser}/>}
         {safeTab==="count"&&<ManualCountTab T={T} items={items} setItems={setItems} countHistory={countHistory} setCountHistory={setCountHistory} currentUser={currentUser}/>}
         {safeTab==="var"  &&<VarianceTab T={T} countHistory={countHistory}/>}
-        {safeTab==="po"   &&<PurchaseOrderTab T={T} items={items} alertSettings={alertSettings}/>}
+        {safeTab==="po"   &&<PurchaseOrderTab T={T} items={items} alertSettings={alertSettings} onConfigure={()=>setShowAlertSettings(true)}/>}
         {safeTab==="hist" &&<HistoryTab T={T} movements={movements}/>}
         {safeTab==="reports"&&<ReportsTab T={T} movements={movements} countHistory={countHistory}/>}
         {safeTab==="users"&&<UsersTab T={T} users={users} setUsers={setUsers}/>}
