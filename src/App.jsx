@@ -4337,8 +4337,10 @@ function ModuleSelector({T,isDark,onToggle,currentUser,onSelect,onLogout,items,m
       {/* Content */}
       <div style={{maxWidth:960,margin:"0 auto",padding:isMobile?"16px":"24px 24px",position:"relative",zIndex:1}}>
 
-        {/* Dashboard */}
-        <Dashboard T={T} isMobile={isMobile} items={items||[]} movements={movements||[]} grnLog={grnLog||[]} wastageLog={wastageLog||[]} glassItems={glassItems||[]} countHistory={countHistory||[]}/>
+        {/* Dashboard — admin and supervisor only */}
+        {(currentUser.role==="admin"||currentUser.role==="supervisor")&&(
+          <Dashboard T={T} isMobile={isMobile} items={items||[]} movements={movements||[]} grnLog={grnLog||[]} wastageLog={wastageLog||[]} glassItems={glassItems||[]} countHistory={countHistory||[]}/>
+        )}
 
         <div style={{fontSize:13,fontWeight:700,color:T.muted,fontFamily:MO,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:12}}>Modules</div>
 
