@@ -251,7 +251,7 @@ const Btn=memo(function Btn({T,children,onClick,v="ghost",s={},disabled=false}){
 const Label=memo(function Label({T,children}){return <div style={{fontSize:10,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:5,fontFamily:MO}}>{children}</div>;});
 const Card=memo(function Card({T,children,s={}}){return <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:T.shadow,...s}}>{children}</div>;});
 const DeptBadge=memo(function DeptBadge({T,dept}){const c=dept==="Front"?T.front:T.kitchen;return <span style={{fontSize:10,fontWeight:700,color:c,background:c+"28",padding:"2px 7px",borderRadius:4,letterSpacing:"0.05em",fontFamily:MO}}>{dept}</span>;});
-const RoleBadge=memo(function RoleBadge({T,role}){const c=roleColor(role,T),b=roleBg(role,T),l={admin:"Admin",supervisor:"Supervisor",counter:"Counter",staff:"Staff"}[role]||role;return <span style={{fontSize:10,fontWeight:700,color:c,background:b,padding:"2px 8px",borderRadius:4,letterSpacing:"0.04em",fontFamily:MO}}>{l}</span>;});
+const RoleBadge=memo(function RoleBadge({T,role}){const c=roleColor(role,T),b=roleBg(role,T),l={admin:"Admin",supervisor:"Supervisor",counter:"Counter",staff:"Staff",accountant:"Accountant"}[role]||role;return <span style={{fontSize:10,fontWeight:700,color:c,background:b,padding:"2px 8px",borderRadius:4,letterSpacing:"0.04em",fontFamily:MO}}>{l}</span>;});
 const StockBadge=memo(function StockBadge({T,surplus}){
   if(surplus>0) return <span style={{fontSize:11,fontWeight:700,color:T.ok,background:T.okBg,padding:"2px 8px",borderRadius:4,fontFamily:MO}}>+{surplus}</span>;
   if(surplus===0) return <span style={{fontSize:11,fontWeight:700,color:T.muted,background:T.border+"88",padding:"2px 8px",borderRadius:4,fontFamily:MO}}>exact</span>;
@@ -5058,11 +5058,49 @@ export default function App(){
       <CreatorStamp T={T}/>
     </ThemeContext.Provider>
   );
-  if(!activeModule) return(
-    <ThemeContext.Provider value={T}>
-      <ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m,tab)=>{setInitialTab(tab||null);setActiveModule(m);}} onLogout={handleLogout} items={items} movements={movements} grnLog={grnLog} wastageLog={wastageLog} glassItems={glassItems} countHistory={countHistory}/>
-    </ThemeContext.Provider>
-  );
+  // Accountant goes straight to F&B Stores (their tabs live there) — skip ModuleSelector
+  if(!activeModule) {
+    if(currentUser.role==="accountant") {
+      // Auto-open stores for accountant — they have no module cards to click
+      return(
+        <ThemeContext.Provider value={T}>
+          <div style={{minHeight:"100vh",background:T.bg,fontFamily:MO,color:T.text}}>
+            <div style={{background:T.navBg,borderBottom:`1px solid ${T.navBorder}`,position:"sticky",top:0,zIndex:90,boxShadow:T.shadow}}>
+              <div style={{maxWidth:1440,margin:"0 auto",padding:"0 16px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,height:50}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                    <HazelLogo T={T} size={30}/>
+                    <div><div style={{fontSize:14,fontWeight:600,color:T.accent,letterSpacing:"0.14em",textTransform:"uppercase",fontFamily:SE,lineHeight:1.1}}>Hazel</div><div style={{fontSize:8,color:T.muted,letterSpacing:"0.22em",textTransform:"uppercase",lineHeight:1,fontFamily:MO}}>Cafe &amp; Cakery</div></div>
+                  </div>
+                  <div style={{marginLeft:"auto",display:"flex",gap:7,alignItems:"center"}}>
+                    <span style={{fontSize:10,fontWeight:700,color:T.warn,background:T.warnBg,padding:"2px 8px",borderRadius:4,fontFamily:MO}}>📊 Accountant View</span>
+                    <ThemeToggle T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)}/>
+                    <UserMenu T={T} user={currentUser} onLogout={handleLogout} isMobile={isMobile}/>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:0,overflowX:"auto",scrollbarWidth:"none"}}>
+                  {allowedTabs.map(t=>{const c=tabColor(t.key,T);const active=safeTab===t.key;return(<button key={t.key} onClick={()=>setTab(t.key)} style={{padding:"8px 13px",border:"none",borderBottom:active?`2px solid ${c}`:"2px solid transparent",background:active?c+"12":"transparent",color:active?c:T.muted,fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:MO,whiteSpace:"nowrap",transition:"all 0.15s",flexShrink:0}}>{t.icon} {t.label}</button>);})}
+                </div>
+              </div>
+            </div>
+            <div style={{maxWidth:1440,margin:"0 auto",padding:isMobile?"12px 10px 80px":"24px 16px 60px"}}>
+              {safeTab==="reports"&&<ReportsTab T={T} movements={movements} countHistory={countHistory}/>}
+              {safeTab==="value"&&<StockValueTab T={T} items={items} isMobile={isMobile}/>}
+              {safeTab==="hist"&&<HistoryTab T={T} movements={movements} currentUser={currentUser}/>}
+              {safeTab==="audit"&&<AuditLogTab T={T} auditLog={auditLog} isMobile={isMobile}/>}
+              {safeTab==="export"&&<ExportTab T={T} items={items} movements={movements} grnLog={grnLog} wastageLog={wastageLog} countHistory={countHistory} alertSettings={alertSettings} currentUser={currentUser}/>}
+            </div>
+            {isMobile&&(<div style={{position:"fixed",bottom:0,left:0,right:0,background:T.navBg,borderTop:`1px solid ${T.navBorder}`,display:"flex",zIndex:100,overflowX:"auto",scrollbarWidth:"none"}}>{allowedTabs.map(t=>{const c=tabColor(t.key,T);const active=safeTab===t.key;return(<button key={t.key} onClick={()=>setTab(t.key)} style={{flexShrink:0,minWidth:60,padding:"9px 6px 7px",border:"none",background:active?c+"15":"transparent",color:active?c:T.muted,cursor:"pointer",fontFamily:MO,display:"flex",flexDirection:"column",alignItems:"center",gap:2,borderTop:active?`2px solid ${c}`:`2px solid transparent`}}><span style={{fontSize:16,lineHeight:1}}>{t.icon}</span><span style={{fontSize:8,fontWeight:700,whiteSpace:"nowrap"}}>{t.label}</span></button>);})}</div>)}
+          </div>
+        </ThemeContext.Provider>
+      );
+    }
+    return(
+      <ThemeContext.Provider value={T}>
+        <ModuleSelector T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onSelect={(m,tab)=>{setInitialTab(tab||null);setActiveModule(m);}} onLogout={handleLogout} items={items} movements={movements} grnLog={grnLog} wastageLog={wastageLog} glassItems={glassItems} countHistory={countHistory}/>
+      </ThemeContext.Provider>
+    );
+  }
   if(activeModule==="glassware") return(
     <ThemeContext.Provider value={T}>
       <GlasswareModule T={T} isDark={isDark} onToggle={()=>setIsDark(p=>!p)} currentUser={currentUser} onBack={()=>setActiveModule(null)} onLogout={handleLogout} setAuditLog={setAuditLog} auditLog={auditLog} glassItems={glassItems} setGlassItems={setGlassItems} glassMov={glassMov} setGlassMov={setGlassMov}/>
