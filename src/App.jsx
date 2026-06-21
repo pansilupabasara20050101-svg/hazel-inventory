@@ -21,6 +21,10 @@ const uid=()=>{
 const nowStr=()=>new Date().toLocaleString("en-GB",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
 const fmtRs=n=>n==null||n===""?"—":`Rs${Number(n).toLocaleString("en-LK",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 
+// Font constants — must be defined BEFORE any component that uses them
+const MO="'DM Mono','Courier New',monospace";
+const SE="'Cormorant Garamond','Georgia',serif";
+
 // ── THEME CONTEXT — eliminates T prop drilling through 57 components ──────────
 const ThemeContext=createContext(null);
 const useT=()=>useContext(ThemeContext);
@@ -234,9 +238,6 @@ const DEFAULT_ITEMS=[
   {id:"K101",dept:"Kitchen",location:"Stores",supplier:"Sivasakthy",brand:"Kist",name:"Kist Tomato Sauce 4L",code:"K101",unit:"Mililitres (ml)",stock:4,minQty:2,perUnit:1850},
   {id:"K115",dept:"Kitchen",location:"Stores",supplier:"Sivasakthy",brand:"Sivashakthy",name:"White Sugar 1kg",code:"K115",unit:"Grams (g)",stock:17,minQty:10,perUnit:220},
 ];
-
-const MO="'DM Mono','Courier New',monospace";
-const SE="'Cormorant Garamond','Georgia',serif";
 
 // ── PRIMITIVE UI COMPONENTS — all memo'd, theme via useT() ───────────────────
 // These render 100s of times per page. memo() prevents re-renders
