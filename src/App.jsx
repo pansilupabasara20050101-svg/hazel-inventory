@@ -799,7 +799,7 @@ function InventoryTab({T,items,setItems,canEdit,setAuditLog,currentUser}){
 }
 
 // ── MANUAL COUNT ──────────────────────────────────────────────────────────────
-function ManualCountTab({T,items,setItems,countHistory,setCountHistory,currentUser}){
+function ManualCountTab({T,items,setItems,countHistory,setCountHistory,currentUser,onCountSubmit}){
   const isMobile=useIsMobile();
   const [counts,setCounts]=useState({});
   const [deptF,setDeptF]=useState("All");
@@ -811,6 +811,8 @@ function ManualCountTab({T,items,setItems,countHistory,setCountHistory,currentUs
     const entries=items.map(i=>({code:i.code,name:i.name,dept:i.dept,unit:i.unit,systemStock:i.stock,physicalCount:counts[i.id]!=null&&counts[i.id]!==""?Number(counts[i.id]):null,variance:counts[i.id]!=null&&counts[i.id]!==""?Number(counts[i.id])-i.stock:null,perUnit:i.perUnit||null}));
     setCountHistory(prev=>[{id:uid(),date:nowStr(),countedBy:currentUser.name,userId:currentUser.id,userRole:currentUser.role,entries},...prev]);
     setItems(prev=>prev.map(i=>{if(counts[i.id]!=null&&counts[i.id]!=="") return{...i,stock:Number(counts[i.id])};return i;}));
+    // FIX3: clear alert tracking so fixed items don't stay in low-stock banner
+    if(onCountSubmit) onCountSubmit();
     setCounts({});setSubmitted(true);setTimeout(()=>setSubmitted(false),3000);
   };
   return(
@@ -920,20 +922,29 @@ function VarianceTab({T,countHistory}){
 }
 
 // ── HISTORY ───────────────────────────────────────────────────────────────────
-function HistoryTab({T,movements}){
+function HistoryTab({T,movements,currentUser}){
   const isMobile=useIsMobile();
   const [filter,setFilter]=useState("all");
   const [search,setSearch]=useState("");
   const [page,setPage]=useState(0);
   const PAGE=50;
-  const filtered=useMemo(()=>{let r=movements;if(filter!=="all") r=r.filter(m=>m.type===filter);if(search) r=r.filter(m=>m.itemName.toLowerCase().includes(search.toLowerCase())||m.code.toLowerCase().includes(search.toLowerCase())||m.personName?.toLowerCase().includes(search.toLowerCase()));return r;},[movements,filter,search]);
+  // FIX5: staff only see their own movements — other roles see all
+  const ownMovements=useMemo(()=>
+    currentUser.role==="staff"
+      ?movements.filter(m=>m.userId===currentUser.id)
+      :movements
+  ,[movements,currentUser]);
+  const filtered=useMemo(()=>{let r=ownMovements;if(filter!=="all") r=r.filter(m=>m.type===filter);if(search) r=r.filter(m=>m.itemName.toLowerCase().includes(search.toLowerCase())||m.code.toLowerCase().includes(search.toLowerCase())||m.personName?.toLowerCase().includes(search.toLowerCase()));return r;},[ownMovements,filter,search]);
   const totalPages=Math.max(1,Math.ceil(filtered.length/PAGE));
   const safeP=Math.min(page,totalPages-1);
   const visible=filtered.slice(safeP*PAGE,(safeP+1)*PAGE);
   return(
     <div>
       <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
-        <div style={{fontSize:22,fontWeight:600,fontFamily:SE,flex:1,color:T.text}}>Movement History <span style={{fontSize:13,color:T.muted,fontWeight:400,fontFamily:MO}}>({movements.length})</span></div>
+        <div style={{fontSize:22,fontWeight:600,fontFamily:SE,flex:1,color:T.text}}>
+          {currentUser.role==="staff"?"My Activity":"Movement History"}
+          <span style={{fontSize:13,color:T.muted,fontWeight:400,fontFamily:MO}}> ({ownMovements.length})</span>
+        </div>
         <Inp T={T} value={search} onChange={v=>{setSearch(v);setPage(0);}} placeholder="Search…" s={{width:160}}/>
         {["all","out","in"].map(f=>(<button key={f} onClick={()=>{setFilter(f);setPage(0);}} style={{padding:"7px 14px",borderRadius:7,border:`1px solid ${filter===f?T.accent:T.border}`,background:filter===f?T.accentDim:"transparent",color:filter===f?T.accent:T.muted,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:MO}}>{f==="all"?"All":f==="out"?"Out":"In"}</button>))}
       </div>
@@ -2717,9 +2728,12 @@ function WastageModule({T,isDark,onToggle,currentUser,onBack,onLogout,fbItems,gl
   const canViewReports=["admin","supervisor"].includes(currentUser.role);
 
   useEffect(()=>{
+    // FIX1+10: If root already passed real data (setWastageLogProp exists), skip fbLoad entirely
+    // Root has already loaded from Firebase — calling fbLoad again overwrites with stale/empty data
+    if(setWastageLogProp){setReady(true);return;}
     let mounted=true;
     fbLoad("wastageLog",[]).then(w=>{
-      if(mounted){setWastageLog(w);setReady(true);}
+      if(mounted){setLocalWastageLog(w);setReady(true);}
     });
     return()=>{mounted=false;};
   },[]);
@@ -3247,20 +3261,21 @@ function GRNModule({T,isDark,onToggle,currentUser,onBack,onLogout,fbItems,setFbI
   const isMobile=useIsMobile();
   const [localGrnLog,setLocalGrnLog]=useState([]);
   const [ready,setReady]=useState(false);
-  const [tab,setTab]=useState("new");
   const [viewGRN,setViewGRN]=useState(null);
 
   // Use root state if provided, else local
   const grnLog=setGrnLogProp?grnLogProp:localGrnLog;
   const setGrnLog=setGrnLogProp||setLocalGrnLog;
 
-  const canViewHistory=["admin","supervisor","counter"].includes(currentUser.role);
+  const canViewHistory=["admin","supervisor"].includes(currentUser.role);// FIX2: counter removed — counters don't receive stock
   const canViewReports=["admin","supervisor"].includes(currentUser.role);
 
   useEffect(()=>{
+    // FIX1: If root passed real data, skip fbLoad — avoids double-fetch overwriting root state
+    if(setGrnLogProp){setReady(true);return;}
     let mounted=true;
     fbLoad("grnLog",[]).then(g=>{
-      if(mounted){setGrnLog(g);setReady(true);}
+      if(mounted){setLocalGrnLog(g);setReady(true);}
     });
     return()=>{mounted=false;};
   },[]);
@@ -3273,11 +3288,15 @@ function GRNModule({T,isDark,onToggle,currentUser,onBack,onLogout,fbItems,setFbI
     return()=>clearTimeout(t);
   },[grnLog,ready]);
 
+  const canCreateGRN=["admin","supervisor","counter","staff"].includes(currentUser.role);
+
   const TABS=[
-    {key:"new",label:"New GRN",icon:"📋"},
+    // FIX2: New GRN only for admin/supervisor — counters don't receive stock
+    ...(canCreateGRN?[{key:"new",label:"New GRN",icon:"📋"}]:[]),
     ...(canViewHistory?[{key:"history",label:"History",icon:"📖"}]:[]),
     ...(canViewReports?[{key:"reports",label:"Reports",icon:"📊"}]:[]),
   ];
+  const [tab,setTab]=useState(canCreateGRN?"new":canViewHistory?"history":"reports");
 
   const handleSave=(grns)=>{
     // grns is an array of GRN records (one per item)
@@ -3781,7 +3800,7 @@ function GRNForm({T,currentUser,fbItems,glassItems,onSave,isMobile}){
 
           <div style={{display:"flex",gap:8,justifyContent:"space-between"}}>
             <Btn T={T} onClick={()=>setStep(1)}>← Back</Btn>
-            <Btn T={T} v="primary" onClick={()=>setStep(3)} disabled={items.some(i=>!i.name||!i.qty||!i.price||!i.itemPhoto)} s={{padding:"12px 28px"}}>Next → Review</Btn>
+            <Btn T={T} v="primary" onClick={()=>setStep(3)} disabled={items.some(i=>!i.name||!i.qty||!i.price)} s={{padding:"12px 28px"}}>Next → Review</Btn>
           </div>
         </div>
       )}
@@ -3981,8 +4000,7 @@ function GRNReports({T,grnLog,isMobile}){
 
 // ── AUDIT LOG ────────────────────────────────────────────────────────────────
 function recordAudit(setAuditLog, action, module, itemName, user, before, after){
-  // Only track non-admin actions
-  if(user.role==="admin") return;
+  // FIX 2: was skipping admin — now ALL roles are logged for full audit trail
   const changes=[];
   if(before&&after){
     const keys=new Set([...Object.keys(before||{}), ...Object.keys(after||{})]);
@@ -4021,6 +4039,7 @@ function AuditLogTab({T,auditLog,isMobile}){
 
   const displayed=useMemo(()=>{
     let r=filtered;
+    // FIX7: module filter so F&B audit tab doesn't show glass/wastage entries mixed in
     if(moduleFilter!=="all") r=r.filter(e=>e.module===moduleFilter);
     if(actionFilter!=="all") r=r.filter(e=>e.action===actionFilter);
     if(search){const q=search.toLowerCase();r=r.filter(e=>e.itemName?.toLowerCase().includes(q)||e.userName?.toLowerCase().includes(q));}
@@ -4309,16 +4328,34 @@ function Dashboard({T,isMobile,items,movements,grnLog,wastageLog,glassItems,coun
 // ── MODULE SELECTOR ──────────────────────────────────────────────────────────
 function ModuleSelector({T,isDark,onToggle,currentUser,onSelect,onLogout,items,movements,grnLog,wastageLog,glassItems,countHistory}){
   const isMobile=useIsMobile();
+  const role=currentUser.role;
+  // FIX 6: filter modules by role — staff/counter should not see GRN
   const modules=[
     {id:"stores",icon:"🏪",title:"F&B Stores",desc:"Food & beverage inventory, stock in/out, orders and reports",color:"#5c3d2e",light:"#fdf6f0",
-      shortcuts:[{label:"Stock Out",icon:"↑",tab:"out"},{label:"Stock In",icon:"↓",tab:"in"},{label:"Inventory",icon:"📦",tab:"inv"}]},
+      roles:["admin","supervisor","counter","staff"],
+      // FIX 5: filter shortcuts to only show what the role can access
+      shortcuts:(()=>{
+        const base=[{label:"Stock Out",icon:"↑",tab:"out"},{label:"Stock In",icon:"↓",tab:"in"}];
+        if(["admin","supervisor","counter"].includes(role)) base.push({label:"Inventory",icon:"📦",tab:"inv"});
+        return base;
+      })()},
     {id:"glassware",icon:"🥤",title:"Glassware & Utensils",desc:"Track cups, plates, bowls, cutlery and breakage",color:"#1a5276",light:"#eaf4fb",
-      shortcuts:[{label:"Breakage",icon:"🔴",tab:"breakage"},{label:"Issue",icon:"📥",tab:"issue"},{label:"Count",icon:"🔢",tab:"count"}]},
+      roles:["admin","supervisor","counter","staff"],
+      // FIX4: staff can breakage/issue but not count
+      shortcuts:(()=>{
+        const base=[{label:"Breakage",icon:"🔴",tab:"breakage"},{label:"Issue",icon:"📥",tab:"issue"}];
+        if(["admin","supervisor","counter"].includes(role)) base.push({label:"Count",icon:"🔢",tab:"count"});
+        return base;
+      })()},
     {id:"wastage",icon:"🗑️",title:"Wastage",desc:"Record food wastage, expired and spoiled items",color:"#922b21",light:"#fdedec",
+      // FIX 4: staff CAN record wastage, counter can too
+      roles:["admin","supervisor","counter","staff"],
       shortcuts:[{label:"Record",icon:"📝",tab:"record"}]},
     {id:"grn",icon:"📋",title:"GRN Scanner",desc:"Scan supplier invoices to automatically receive stock",color:"#1e8449",light:"#eafaf1",
+      // All roles can access GRN — staff/counter submit, admin/supervisor create
+      roles:["admin","supervisor","counter","staff"],
       shortcuts:[{label:"New GRN",icon:"📋",tab:"new"}]},
-  ];
+  ].filter(m=>m.roles.includes(role));
   const [hovered,setHovered]=useState(null);
   return(
     <div style={{minHeight:"100vh",background:T.bg,fontFamily:SE,transition:"background 0.25s"}}>
@@ -4667,14 +4704,15 @@ export default function App(){
         </div>
       </div>
       <div style={{maxWidth:1440,margin:"0 auto",padding:isMobile?"12px 10px 80px":"24px 16px 60px"}}>
-        {alertBanner.length>0&&<LowStockAlertBanner T={T} alertItems={alertBanner} alertSettings={alertSettings} onDismiss={()=>setAlertBanner([])} onConfigure={()=>setShowAlertSettings(true)}/>}
+        {/* FIX 7: low stock banner only for roles who can act on it */}
+        {alertBanner.length>0&&(currentUser.role==="admin"||currentUser.role==="supervisor")&&<LowStockAlertBanner T={T} alertItems={alertBanner} alertSettings={alertSettings} onDismiss={()=>setAlertBanner([])} onConfigure={()=>setShowAlertSettings(true)}/>}
         {safeTab==="out"  &&<MovementTab T={T} type="out" items={items} movements={movements} setMovements={setMovements} setItems={setItems} currentUser={currentUser}/>}
         {safeTab==="in"   &&<MovementTab T={T} type="in"  items={items} movements={movements} setMovements={setMovements} setItems={setItems} currentUser={currentUser}/>}
         {safeTab==="inv"  &&<InventoryTab T={T} items={items} setItems={setItems} canEdit={role.canEditItems} setAuditLog={setAuditLog} currentUser={currentUser}/>}
-        {safeTab==="count"&&<ManualCountTab T={T} items={items} setItems={setItems} countHistory={countHistory} setCountHistory={setCountHistory} currentUser={currentUser}/>}
+        {safeTab==="count"&&<ManualCountTab T={T} items={items} setItems={setItems} countHistory={countHistory} setCountHistory={setCountHistory} currentUser={currentUser} onCountSubmit={()=>{alertedRef.current.clear();localStorage.removeItem("alertedIds");setAlertBanner([]);}}/>}
         {safeTab==="var"  &&<VarianceTab T={T} countHistory={countHistory}/>}
         {safeTab==="po"   &&<PurchaseOrderTab T={T} items={items} alertSettings={alertSettings} onConfigure={()=>setShowAlertSettings(true)}/>}
-        {safeTab==="hist" &&<HistoryTab T={T} movements={movements}/>}
+        {safeTab==="hist" &&<HistoryTab T={T} movements={movements} currentUser={currentUser}/>}
         {safeTab==="reports"&&<ReportsTab T={T} movements={movements} countHistory={countHistory}/>}
         {safeTab==="users"&&<UsersTab T={T} users={users} setUsers={setUsers}/>}
         {safeTab==="devices"&&<DevicesTab T={T} devices={devices} setDevices={setDevices} loginHistory={loginHistory}/>}
