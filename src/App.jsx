@@ -153,13 +153,67 @@ const LIGHT={
 };
 
 const ROLES={
-  admin:{label:"Admin",tabs:["out","in","inv","count","var","po","hist","reports","audit","value","users","devices"],canEditItems:true,canEditUsers:true,canEditDevices:true,canViewReports:true},
-  supervisor:{label:"Supervisor",tabs:["out","in","inv","count","var","po","hist","reports","audit","value"],canEditItems:true,canViewReports:true},
+  admin:{label:"Admin",tabs:["out","in","inv","count","var","po","hist","reports","audit","value","export","users","devices"],canEditItems:true,canEditUsers:true,canEditDevices:true,canViewReports:true},
+  supervisor:{label:"Supervisor",tabs:["out","in","inv","count","var","po","hist","reports","audit","value","export"],canEditItems:true,canViewReports:true},
   counter:{label:"Stock Counter",tabs:["out","in","count","hist"],canEditItems:false},
   staff:{label:"Staff",tabs:["out","in"],canEditItems:false},
+  // Accountant: read-only — reports, stock value, history, audit, export only
+  accountant:{label:"Accountant",tabs:["reports","value","hist","audit","export"],canEditItems:false,canViewReports:true,isAccountant:true},
 };
-const roleColor=(r,T)=>({admin:T.accent,supervisor:T.purple,counter:T.blue,staff:T.ok}[r]||T.muted);
-const roleBg=(r,T)=>({admin:T.accentDim,supervisor:T.purpleBg,counter:T.blueBg,staff:T.okBg}[r]||T.border+"44");
+const roleColor=(r,T)=>({admin:T.accent,supervisor:T.purple,counter:T.blue,staff:T.ok,accountant:T.warn}[r]||T.muted);
+const roleBg=(r,T)=>({admin:T.accentDim,supervisor:T.purpleBg,counter:T.blueBg,staff:T.okBg,accountant:T.warnBg}[r]||T.border+"44");
+
+// All possible permissions that can be toggled per user
+const ALL_PERMISSIONS={
+  // Stores tabs
+  out:{label:"Stock Out",group:"Stores"},
+  in:{label:"Stock In",group:"Stores"},
+  inv:{label:"Inventory",group:"Stores"},
+  count:{label:"Manual Count",group:"Stores"},
+  var:{label:"Variance",group:"Stores"},
+  po:{label:"Purchase Order",group:"Stores"},
+  hist:{label:"History",group:"Stores"},
+  reports:{label:"Reports",group:"Stores"},
+  audit:{label:"Audit Log",group:"Stores"},
+  value:{label:"Stock Value",group:"Stores"},
+  users:{label:"Users",group:"Stores"},
+  devices:{label:"Devices",group:"Stores"},
+  // Modules
+  mod_stores:{label:"F&B Stores Module",group:"Modules"},
+  mod_glassware:{label:"Glassware Module",group:"Modules"},
+  mod_wastage:{label:"Wastage Module",group:"Modules"},
+  mod_grn:{label:"GRN Module",group:"Modules"},
+  // Actions
+  canEditItems:{label:"Edit Inventory Items",group:"Actions"},
+  canViewReports:{label:"View Reports",group:"Actions"},
+  // Export
+  canExport:{label:"Export Data (Auditor)",group:"Actions"},
+};
+
+// Get effective tabs for a user — merges role defaults with custom overrides
+function getEffectiveTabs(user){
+  const base=ROLES[user.role]?.tabs||[];
+  if(!user.customAccess) return base;
+  const set=new Set(base);
+  Object.entries(user.customAccess).forEach(([k,v])=>{
+    if(ALL_PERMISSIONS[k]?.group==="Stores"){
+      if(v===true) set.add(k);
+      if(v===false) set.delete(k);
+    }
+  });
+  return [...set];
+}
+
+// Get effective module access
+function canAccessModule(user,moduleId){
+  const permKey="mod_"+moduleId;
+  if(user.customAccess?.[permKey]===false) return false;
+  if(user.customAccess?.[permKey]===true) return true;
+  // Default: accountant gets no modules (reads reports from Stores only)
+  if(user.role==="accountant") return false;
+  return true;
+}
+
 
 const DEFAULT_USERS=[
   {id:"u1",username:"admin",password:"admin123",role:"admin",name:"Admin User",email:"admin@hazelcafe.lk",active:true,createdAt:"01/01/2025, 00:00"},
@@ -955,11 +1009,11 @@ function HistoryTab({T,movements,currentUser}){
 }
 
 // ── USERS ─────────────────────────────────────────────────────────────────────
-function UserModal({T,user,onClose,onSave}){
-  const [f,setF]=useState(user||{name:"",username:"",password:"",email:"",role:"staff",active:true});
+function UserModal({T,user,onClose,onSave,currentUser:adminUser}){
+  const [f,setF]=useState(user||{name:"",username:"",password:"",email:"",role:"staff",active:true,customAccess:null});
   const [newPw,setNewPw]=useState("");
-  const [showPwReset,setShowPwReset]=useState(false);
   const [pwDone,setPwDone]=useState(false);
+  const [showCustom,setShowCustom]=useState(!!(user?.customAccess));
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
 
   const resetPin=()=>{
@@ -970,20 +1024,67 @@ function UserModal({T,user,onClose,onSave}){
 
   const doSave=()=>{
     const out={...f};
-    if(user&&!newPw){delete out.password;}// keep existing if blank
+    if(user&&!newPw){delete out.password;}
     else if(newPw) out.password=newPw;
+    // If custom access panel closed, clear overrides
+    if(!showCustom) out.customAccess=null;
     onSave(out);
   };
 
+  const togglePerm=(key)=>{
+    const base=ROLES[f.role]?.tabs||[];
+    const current=f.customAccess||{};
+    // Determine current effective state
+    let effective;
+    if(ALL_PERMISSIONS[key]?.group==="Stores"){
+      effective=current[key]!==undefined?current[key]:base.includes(key);
+    } else if(ALL_PERMISSIONS[key]?.group==="Modules"){
+      effective=current[key]!==undefined?current[key]:f.role!=="accountant";
+    } else {
+      effective=current[key]!==undefined?current[key]:(ROLES[f.role]?.[key]||false);
+    }
+    // Toggle: if currently true set false, if false set true
+    // If toggled back to role default, remove the override
+    const roleDefault=ALL_PERMISSIONS[key]?.group==="Stores"?base.includes(key):
+                      ALL_PERMISSIONS[key]?.group==="Modules"?f.role!=="accountant":
+                      (ROLES[f.role]?.[key]||false);
+    const newVal=!effective;
+    const next={...current};
+    if(newVal===roleDefault) delete next[key]; else next[key]=newVal;
+    setF(p=>({...p,customAccess:Object.keys(next).length>0?next:null}));
+  };
+
+  const getEffective=(key)=>{
+    const base=ROLES[f.role]?.tabs||[];
+    const current=f.customAccess||{};
+    if(current[key]!==undefined) return current[key];
+    if(ALL_PERMISSIONS[key]?.group==="Stores") return base.includes(key);
+    if(ALL_PERMISSIONS[key]?.group==="Modules") return f.role!=="accountant";
+    return ROLES[f.role]?.[key]||false;
+  };
+
+  const isOverridden=(key)=>{
+    return f.customAccess&&f.customAccess[key]!==undefined;
+  };
+
+  const groups=["Stores","Modules","Actions"];
+  const overrideCount=f.customAccess?Object.keys(f.customAccess).length:0;
+
   return(
     <div style={{position:"fixed",inset:0,background:"#000a",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <Card T={T} s={{padding:28,width:480,maxWidth:"100%",maxHeight:"92vh",overflowY:"auto"}}>
+      <Card T={T} s={{padding:28,width:560,maxWidth:"100%",maxHeight:"95vh",overflowY:"auto"}}>
         <h2 style={{margin:"0 0 20px",fontSize:22,fontFamily:SE,fontWeight:600,color:T.text}}>{user?"Edit User":"New User"}</h2>
-        <div style={{display:"grid",gap:12,marginBottom:20}}>
+        <div style={{display:"grid",gap:12,marginBottom:16}}>
           <div><Label T={T}>Full Name</Label><Inp T={T} value={f.name} onChange={v=>set("name",v)} placeholder="Full name"/></div>
           <div><Label T={T}>Username</Label><Inp T={T} value={f.username} onChange={v=>set("username",v)} placeholder="Login username"/></div>
           <div><Label T={T}>Email Address</Label><Inp T={T} type="email" value={f.email||""} onChange={v=>set("email",v)} placeholder="user@hazelcafe.lk"/></div>
-          <div><Label T={T}>Role</Label><Sel T={T} value={f.role} onChange={v=>set("role",v)}>{Object.entries(ROLES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</Sel></div>
+          <div>
+            <Label T={T}>Role</Label>
+            <Sel T={T} value={f.role} onChange={v=>{set("role",v);setF(p=>({...p,role:v,customAccess:null}));setShowCustom(false);}}>
+              {Object.entries(ROLES).map(([k,r])=><option key={k} value={k}>{r.label}</option>)}
+            </Sel>
+            {f.role==="accountant"&&<div style={{fontSize:11,color:T.warn,fontFamily:MO,marginTop:4}}>⚠ Accountant: read-only access to Reports, Stock Value, History and Audit. Can export data. No stock operations.</div>}
+          </div>
           <div>
             <Label T={T}>{user?"New Password (leave blank to keep current)":"Password"}</Label>
             <Inp T={T} type="password" value={newPw} onChange={setNewPw} placeholder={user?"Enter new password to change…":"Set password"}/>
@@ -997,6 +1098,59 @@ function UserModal({T,user,onClose,onSave}){
             </div>
           )}
         </div>
+
+        {/* Custom Access Panel — Admin only */}
+        <div style={{borderTop:`1px solid ${T.border}`,paddingTop:16,marginBottom:16}}>
+          <button onClick={()=>setShowCustom(p=>!p)}
+            style={{width:"100%",padding:"10px 14px",borderRadius:8,border:`1px solid ${showCustom?T.accent:T.border}`,background:showCustom?T.accentDim:T.card2,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",fontFamily:MO}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:14}}>🔧</span>
+              <span style={{fontSize:13,fontWeight:700,color:showCustom?T.accent:T.text}}>Custom Access Override</span>
+              {overrideCount>0&&<span style={{fontSize:10,fontWeight:700,color:T.accent,background:T.accentDim,padding:"2px 7px",borderRadius:10,fontFamily:MO}}>{overrideCount} override{overrideCount!==1?"s":""}</span>}
+            </div>
+            <span style={{fontSize:11,color:T.muted,fontFamily:MO}}>{showCustom?"▲ Hide":"▼ Expand"}</span>
+          </button>
+
+          {showCustom&&(
+            <div style={{marginTop:12,border:`1px solid ${T.accent}33`,borderRadius:10,padding:16,background:T.accentDim+"44"}}>
+              <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:14,lineHeight:1.6}}>
+                🔒 <strong style={{color:T.text}}>Role defaults shown below.</strong> Toggle to override for this user only.
+                <br/>Orange = overridden from role default. Click again to restore default.
+              </div>
+              {groups.map(group=>{
+                const perms=Object.entries(ALL_PERMISSIONS).filter(([,p])=>p.group===group);
+                return(
+                  <div key={group} style={{marginBottom:16}}>
+                    <div style={{fontSize:10,fontWeight:700,color:T.muted,letterSpacing:"0.1em",textTransform:"uppercase",fontFamily:MO,marginBottom:8}}>{group}</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                      {perms.map(([key,perm])=>{
+                        const on=getEffective(key);
+                        const overridden=isOverridden(key);
+                        return(
+                          <button key={key} onClick={()=>togglePerm(key)}
+                            style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:7,border:`1px solid ${overridden?T.warn:on?T.ok+"44":T.border}`,background:overridden?T.warnBg:on?T.okBg:T.card,cursor:"pointer",textAlign:"left",transition:"all 0.15s"}}>
+                            <div style={{width:14,height:14,borderRadius:3,background:on?(overridden?T.warn:T.ok):T.border,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                              {on&&<span style={{fontSize:9,color:"#fff",fontWeight:900}}>✓</span>}
+                            </div>
+                            <span style={{fontSize:11,fontWeight:600,color:overridden?T.warn:on?T.text:T.muted,fontFamily:MO}}>{perm.label}</span>
+                            {overridden&&<span style={{marginLeft:"auto",fontSize:8,color:T.warn,fontFamily:MO,fontWeight:700}}>CUSTOM</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              {overrideCount>0&&(
+                <button onClick={()=>setF(p=>({...p,customAccess:null}))}
+                  style={{width:"100%",padding:"8px",borderRadius:7,border:`1px solid ${T.low}44`,background:T.lowBg,color:T.low,cursor:"pointer",fontFamily:MO,fontSize:11,fontWeight:700,marginTop:4}}>
+                  ✕ Clear all overrides — restore role defaults
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
         <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
           <Btn T={T} onClick={onClose}>Cancel</Btn>
           <Btn T={T} v="primary" onClick={doSave} disabled={!f.name||!f.username||(!user&&!newPw)}>Save User</Btn>
@@ -1006,14 +1160,20 @@ function UserModal({T,user,onClose,onSave}){
   );
 }
 
-function UsersTab({T,users,setUsers}){
+function UsersTab({T,users,setUsers,currentUser}){
   const [showModal,setShowModal]=useState(false);const [editUser,setEditUser]=useState(null);const [search,setSearch]=useState("");
   const filtered=useMemo(()=>{if(!search) return users;const q=search.toLowerCase();return users.filter(u=>u.name.toLowerCase().includes(q)||u.username.toLowerCase().includes(q));},[users,search]);
   return(
     <div>
       <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}><div style={{flex:1}}><div style={{fontSize:22,fontWeight:600,fontFamily:SE,color:T.text}}>User Management</div></div><Inp T={T} value={search} onChange={setSearch} placeholder="Search…" s={{width:200}}/><Btn T={T} v="primary" onClick={()=>{setEditUser(null);setShowModal(true);}}>+ New User</Btn></div>
-      <Card T={T} s={{overflow:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}><thead><tr style={{borderBottom:`1px solid ${T.border}`,background:T.card2}}>{["Name","Username","Email","Role","Status","Actions"].map(h=>(<th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:MO}}>{h}</th>))}</tr></thead><tbody>{filtered.map((u,idx)=>(<tr key={u.id} style={{borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><td style={{padding:"12px 14px",fontSize:14,fontWeight:600,color:T.text,fontFamily:SE}}>{u.name}</td><td style={{padding:"12px 14px",fontFamily:MO,fontSize:12,color:T.accent}}>{u.username}</td><td style={{padding:"12px 14px",fontSize:12,color:T.muted}}>{u.email||"—"}</td><td style={{padding:"12px 14px"}}><RoleBadge T={T} role={u.role}/></td><td style={{padding:"12px 14px"}}><span style={{fontSize:10,fontWeight:700,color:u.active?T.ok:T.muted,background:u.active?T.okBg:T.border+"55",padding:"2px 8px",borderRadius:4,fontFamily:MO}}>{u.active?"Active":"Inactive"}</span></td><td style={{padding:"12px 14px"}}><div style={{display:"flex",gap:5}}><button onClick={()=>{setEditUser(u);setShowModal(true);}} style={{padding:"4px 9px",borderRadius:5,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:MO}}>Edit</button><button onClick={()=>setUsers(prev=>prev.map(p=>p.id===u.id?{...p,active:!p.active}:p))} style={{padding:"4px 9px",borderRadius:5,border:`1px solid ${u.active?T.low+"44":T.ok+"44"}`,background:"transparent",color:u.active?T.low:T.ok,cursor:"pointer",fontSize:11,fontFamily:MO}}>{u.active?"Disable":"Enable"}</button></div></td></tr>))}</tbody></table></Card>
-      {showModal&&<UserModal T={T} user={editUser} onClose={()=>setShowModal(false)} onSave={form=>{if(form.id) setUsers(prev=>prev.map(u=>u.id===form.id?form:u));else setUsers(prev=>[...prev,{...form,id:uid(),createdAt:nowStr(),active:true}]);setShowModal(false);}}/>}
+      <Card T={T} s={{overflow:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}><thead><tr style={{borderBottom:`1px solid ${T.border}`,background:T.card2}}>{["Name","Username","Email","Role","Access","Status","Actions"].map(h=>(<th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:9,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:MO}}>{h}</th>))}</tr></thead><tbody>{filtered.map((u,idx)=>(<tr key={u.id} style={{borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><td style={{padding:"12px 14px",fontSize:14,fontWeight:600,color:T.text,fontFamily:SE}}>{u.name}</td><td style={{padding:"12px 14px",fontFamily:MO,fontSize:12,color:T.accent}}>{u.username}</td><td style={{padding:"12px 14px",fontSize:12,color:T.muted}}>{u.email||"—"}</td><td style={{padding:"12px 14px"}}><RoleBadge T={T} role={u.role}/></td>
+      <td style={{padding:"12px 14px"}}>
+        {u.customAccess&&Object.keys(u.customAccess).length>0
+          ?<span style={{fontSize:10,fontWeight:700,color:T.warn,background:T.warnBg,padding:"2px 8px",borderRadius:4,fontFamily:MO}}>🔧 {Object.keys(u.customAccess).length} override{Object.keys(u.customAccess).length!==1?"s":""}</span>
+          :<span style={{fontSize:10,color:T.muted,fontFamily:MO}}>Role default</span>}
+      </td>
+      <td style={{padding:"12px 14px"}}><span style={{fontSize:10,fontWeight:700,color:u.active?T.ok:T.muted,background:u.active?T.okBg:T.border+"55",padding:"2px 8px",borderRadius:4,fontFamily:MO}}>{u.active?"Active":"Inactive"}</span></td><td style={{padding:"12px 14px"}}><div style={{display:"flex",gap:5}}><button onClick={()=>{setEditUser(u);setShowModal(true);}} style={{padding:"4px 9px",borderRadius:5,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:MO}}>Edit</button><button onClick={()=>setUsers(prev=>prev.map(p=>p.id===u.id?{...p,active:!p.active}:p))} style={{padding:"4px 9px",borderRadius:5,border:`1px solid ${u.active?T.low+"44":T.ok+"44"}`,background:"transparent",color:u.active?T.low:T.ok,cursor:"pointer",fontSize:11,fontFamily:MO}}>{u.active?"Disable":"Enable"}</button></div></td></tr>))}</tbody></table></Card>
+      {showModal&&<UserModal T={T} user={editUser} currentUser={currentUser} onClose={()=>setShowModal(false)} onSave={form=>{if(form.id) setUsers(prev=>prev.map(u=>u.id===form.id?form:u));else setUsers(prev=>[...prev,{...form,id:uid(),createdAt:nowStr(),active:true}]);setShowModal(false);}}/>}
     </div>
   );
 }
@@ -1929,8 +2089,8 @@ function DevicesTab({T,devices,setDevices,loginHistory}){
 }
 
 // ── ROOT APP ──────────────────────────────────────────────────────────────────
-const ALL_TABS=[{key:"out",label:"Stock Out",icon:"↑"},{key:"in",label:"Stock In",icon:"↓"},{key:"inv",label:"Inventory",icon:"📦"},{key:"count",label:"Count",icon:"✏"},{key:"var",label:"Variance",icon:"≠"},{key:"po",label:"Order",icon:"🛒"},{key:"hist",label:"History",icon:"📋"},{key:"reports",label:"Reports",icon:"📈"},{key:"audit",label:"Audit",icon:"🔍"},{key:"value",label:"Stock Value",icon:"💰"},{key:"users",label:"Users",icon:"👥"},{key:"devices",label:"Devices",icon:"🖥"}];
-const tabColor=(k,T)=>({out:T.low,in:T.ok,inv:T.blue,count:T.warn,var:T.purple,po:T.accent,hist:T.muted,audit:T.purple,reports:T.blue,users:T.purple,devices:T.ok}[k]||T.muted);
+const ALL_TABS=[{key:"out",label:"Stock Out",icon:"↑"},{key:"in",label:"Stock In",icon:"↓"},{key:"inv",label:"Inventory",icon:"📦"},{key:"count",label:"Count",icon:"✏"},{key:"var",label:"Variance",icon:"≠"},{key:"po",label:"Order",icon:"🛒"},{key:"hist",label:"History",icon:"📋"},{key:"reports",label:"Reports",icon:"📈"},{key:"audit",label:"Audit",icon:"🔍"},{key:"value",label:"Stock Value",icon:"💰"},{key:"export",label:"Export",icon:"⬇"},{key:"users",label:"Users",icon:"👥"},{key:"devices",label:"Devices",icon:"🖥"}];
+const tabColor=(k,T)=>({out:T.low,in:T.ok,inv:T.blue,count:T.warn,var:T.purple,po:T.accent,hist:T.muted,audit:T.purple,reports:T.blue,users:T.purple,devices:T.ok,export:T.ok,value:T.accent}[k]||T.muted);
 
 // ── QR CODE COMPONENTS ───────────────────────────────────────────────────────
 function useQRCode(text, size=120){
@@ -3998,6 +4158,259 @@ function GRNReports({T,grnLog,isMobile}){
   );
 }
 
+// ── EXPORT TAB (Accountant / Admin / Supervisor) ─────────────────────────────
+function ExportTab({T,items,movements,grnLog,wastageLog,countHistory,alertSettings,currentUser}){
+  const isMobile=useIsMobile();
+  const [startDate,setStartDate]=useState(()=>{const d=new Date();d.setMonth(d.getMonth()-1);return d.toISOString().split("T")[0];});
+  const [endDate,setEndDate]=useState(()=>new Date().toISOString().split("T")[0]);
+  const [exporting,setExporting]=useState(false);
+  const [emailSending,setEmailSending]=useState(false);
+  const [emailSent,setEmailSent]=useState(false);
+  const [emailTo,setEmailTo]=useState("");
+  const [emailError,setEmailError]=useState("");
+  const [selected,setSelected]=useState({movements:true,grn:true,wastage:true,stockValue:true,lowStock:true});
+
+  const toggle=(k)=>setSelected(p=>({...p,[k]:!p[k]}));
+
+  // Filter data by date range
+  const filterByDate=(arr,dateKey="date")=>{
+    if(!startDate&&!endDate) return arr;
+    const from=startDate?new Date(startDate).setHours(0,0,0,0):null;
+    const to=endDate?new Date(endDate).setHours(23,59,59,999):null;
+    return arr.filter(item=>{
+      const raw=item[dateKey]||"";
+      const parts=raw.split(",")[0].split("/");
+      if(parts.length!==3) return true;
+      const d=new Date(parts[2],parts[1]-1,parts[0]).getTime();
+      if(from&&d<from) return false;
+      if(to&&d>to) return false;
+      return true;
+    });
+  };
+
+  const filteredMovements=filterByDate(movements,"timestamp");
+  const filteredGRN=filterByDate(grnLog);
+  const filteredWastage=filterByDate(wastageLog);
+
+  const buildCSV=(rows,headers)=>{
+    const escape=(v)=>{
+      const s=String(v??"-").replace(/"/g,'""');
+      return s.includes(",")||s.includes('"')||s.includes('\n')?`"${s}"`:s;
+    };
+    return[headers.join(","),...rows.map(r=>headers.map(h=>escape(r[h])).join(","))].join("\n");
+  };
+
+  const downloadCSV=(content,filename)=>{
+    const blob=new Blob([content],{type:"text/csv"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download=filename;a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportCSV=async()=>{
+    setExporting(true);
+    const dateStr=`${startDate}_to_${endDate}`;
+    try{
+      if(selected.movements&&filteredMovements.length){
+        const rows=filteredMovements.map(m=>({Date:m.timestamp,Type:m.type,Item:m.itemName,Code:m.code,Department:m.dept,Staff:m.personName,Qty:m.qty,"Prev Stock":m.prevStock,"New Stock":m.newStock,Note:m.note||""}));
+        downloadCSV(buildCSV(rows,["Date","Type","Item","Code","Department","Staff","Qty","Prev Stock","New Stock","Note"]),`hazel_movements_${dateStr}.csv`);
+      }
+      await new Promise(r=>setTimeout(r,300));
+      if(selected.grn&&filteredGRN.length){
+        const rows=filteredGRN.map(g=>({Date:g.date,Supplier:g.supplier,"Invoice No":g.invoiceNo,"Invoice Amount":g.invoiceAmount,"Paid By":g.paidBy,Item:g.itemName,Qty:g.qty,"Price/Unit":g.price,Total:g.total,Staff:g.staffName}));
+        downloadCSV(buildCSV(rows,["Date","Supplier","Invoice No","Invoice Amount","Paid By","Item","Qty","Price/Unit","Total","Staff"]),`hazel_grn_${dateStr}.csv`);
+      }
+      await new Promise(r=>setTimeout(r,300));
+      if(selected.wastage&&filteredWastage.length){
+        const rows=filteredWastage.map(w=>({Date:w.date,Staff:w.staffName,Source:w.sourceType==="fb"?"F&B Storeroom":w.sourceType==="glass"?"Glassware":"Free Entry",Item:w.itemName,"Wastage Type":w.wastageType,Qty:w.qty,Unit:w.unit,"Est. Loss (Rs)":w.loss||0,Explanation:w.explanation||""}));
+        downloadCSV(buildCSV(rows,["Date","Staff","Source","Item","Wastage Type","Qty","Unit","Est. Loss (Rs)","Explanation"]),`hazel_wastage_${dateStr}.csv`);
+      }
+      await new Promise(r=>setTimeout(r,300));
+      if(selected.stockValue){
+        const rows=items.map(i=>({Code:i.code,Item:i.name,Department:i.dept,Supplier:i.supplier||"-",Brand:i.brand||"-",Unit:i.unit,"Current Stock":i.stock,"Min Qty":i.minQty,"Per Unit (Rs)":i.perUnit||0,"Total Value (Rs)":Number(i.stock||0)*Number(i.perUnit||0)}));
+        downloadCSV(buildCSV(rows,["Code","Item","Department","Supplier","Brand","Unit","Current Stock","Min Qty","Per Unit (Rs)","Total Value (Rs)"]),`hazel_stock_value_${dateStr}.csv`);
+      }
+    }catch(e){console.error("Export error:",e);}
+    setExporting(false);
+  };
+
+  const exportPDF=()=>{
+    const w=window.open("","_blank","width=1000,height=800");
+    if(!w){return;}
+    const totalValue=items.reduce((s,i)=>s+(Number(i.stock||0)*Number(i.perUnit||0)),0);
+    const totalLoss=filteredWastage.reduce((s,w)=>s+(w.loss||0),0);
+    const totalGRNSpend=filteredGRN.reduce((s,g)=>s+(g.total||0),0);
+    const totalOut=filteredMovements.filter(m=>m.type==="out").length;
+    const totalIn=filteredMovements.filter(m=>m.type==="in").length;
+
+    w.document.write(`<!DOCTYPE html><html><head><title>Hazel Cafe — Inventory Report</title>
+<style>
+  body{font-family:Georgia,serif;padding:32px;color:#2e1e12;max-width:1000px;margin:0 auto}
+  h1{font-size:26px;color:#5c3d2e;border-bottom:3px solid #5c3d2e;padding-bottom:8px}
+  h2{font-size:16px;color:#5c3d2e;margin:24px 0 8px;border-left:4px solid #c9966b;padding-left:10px}
+  .meta{font-family:monospace;font-size:12px;color:#8c6e5a;margin-bottom:24px}
+  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}
+  .card{background:#fdf6f0;border:1px solid #e8ddd5;border-radius:8px;padding:14px;text-align:center}
+  .card .val{font-size:22px;font-weight:800;color:#5c3d2e;font-family:monospace}
+  .card .lbl{font-size:10px;color:#8c6e5a;font-family:monospace;text-transform:uppercase;margin-top:4px}
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:12px}
+  th{background:#5c3d2e;color:#fff;padding:8px 10px;text-align:left;font-family:monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.05em}
+  td{padding:7px 10px;border-bottom:1px solid #f0ebe5}
+  tr:nth-child(even) td{background:#fdf6f0}
+  .footer{margin-top:32px;font-size:10px;color:#b0a090;font-family:monospace;text-align:center;border-top:1px solid #e8ddd5;padding-top:16px}
+  @media print{body{padding:16px}h2{page-break-before:auto}}
+</style></head><body>
+<h1>📋 Hazel Cafe &amp; Cakery — Inventory Report</h1>
+<div class="meta">Period: ${startDate} to ${endDate} &nbsp;|&nbsp; Generated: ${nowStr()} &nbsp;|&nbsp; By: ${currentUser.name}</div>
+
+<div class="summary">
+  <div class="card"><div class="val">${totalOut+totalIn}</div><div class="lbl">Total Movements</div></div>
+  <div class="card"><div class="val">Rs ${Math.round(totalValue).toLocaleString()}</div><div class="lbl">Stock Value</div></div>
+  <div class="card"><div class="val">Rs ${Math.round(totalGRNSpend).toLocaleString()}</div><div class="lbl">GRN Spend</div></div>
+  <div class="card"><div class="val">Rs ${Math.round(totalLoss).toLocaleString()}</div><div class="lbl">Wastage Loss</div></div>
+</div>
+
+${selected.stockValue?`<h2>📦 Current Stock Value</h2>
+<table><tr><th>Code</th><th>Item</th><th>Dept</th><th>Stock</th><th>Per Unit (Rs)</th><th>Total Value (Rs)</th></tr>
+${items.map(i=>`<tr><td>${i.code}</td><td>${i.name}</td><td>${i.dept}</td><td>${i.stock}</td><td>${i.perUnit||"-"}</td><td>${Math.round(Number(i.stock||0)*Number(i.perUnit||0)).toLocaleString()}</td></tr>`).join("")}
+<tr style="font-weight:800"><td colspan="5">TOTAL</td><td>Rs ${Math.round(totalValue).toLocaleString()}</td></tr>
+</table>`:""}
+
+${selected.grn&&filteredGRN.length?`<h2>📋 GRN Records</h2>
+<table><tr><th>Date</th><th>Supplier</th><th>Invoice</th><th>Item</th><th>Qty</th><th>Price</th><th>Total (Rs)</th><th>Paid By</th></tr>
+${filteredGRN.map(g=>`<tr><td>${g.date}</td><td>${g.supplier||"-"}</td><td>${g.invoiceNo||"-"}</td><td>${g.itemName}</td><td>${g.qty}</td><td>${g.price}</td><td>${(g.total||0).toLocaleString()}</td><td>${g.paidBy||"-"}</td></tr>`).join("")}
+<tr style="font-weight:800"><td colspan="6">TOTAL SPEND</td><td>Rs ${Math.round(totalGRNSpend).toLocaleString()}</td><td></td></tr>
+</table>`:""}
+
+${selected.wastage&&filteredWastage.length?`<h2>🗑️ Wastage Records</h2>
+<table><tr><th>Date</th><th>Staff</th><th>Item</th><th>Type</th><th>Qty</th><th>Est. Loss (Rs)</th></tr>
+${filteredWastage.map(w=>`<tr><td>${w.date}</td><td>${w.staffName}</td><td>${w.itemName}</td><td>${w.wastageType}</td><td>${w.qty}</td><td>${(w.loss||0).toLocaleString()}</td></tr>`).join("")}
+<tr style="font-weight:800"><td colspan="5">TOTAL LOSS</td><td>Rs ${Math.round(totalLoss).toLocaleString()}</td></tr>
+</table>`:""}
+
+${selected.movements&&filteredMovements.length?`<h2>📈 Stock Movements</h2>
+<table><tr><th>Date</th><th>Type</th><th>Item</th><th>Staff</th><th>Qty</th><th>Prev</th><th>New</th></tr>
+${filteredMovements.slice(0,200).map(m=>`<tr><td>${m.timestamp}</td><td style="color:${m.type==="out"?"#c0392b":"#2e7d32"};font-weight:700">${m.type==="out"?"↑ OUT":"↓ IN"}</td><td>${m.itemName}</td><td>${m.personName||"-"}</td><td>${m.qty}</td><td>${m.prevStock}</td><td>${m.newStock}</td></tr>`).join("")}
+${filteredMovements.length>200?`<tr><td colspan="7" style="text-align:center;color:#8c6e5a;font-style:italic">... ${filteredMovements.length-200} more rows — export CSV for full data</td></tr>`:""}
+</table>`:""}
+
+<div class="footer">Hazel Cafe &amp; Cakery Inventory System &nbsp;|&nbsp; Confidential &nbsp;|&nbsp; ${nowStr()}</div>
+<script>window.onload=()=>window.print();<\/script>
+</body></html>`);
+    w.document.close();
+  };
+
+  const sendEmail=async()=>{
+    if(!emailTo){setEmailError("Enter an email address.");return;}
+    if(!alertSettings?.email1&&!emailTo){setEmailError("Enter recipient email.");return;}
+    setEmailSending(true);setEmailError("");
+    try{
+      const totalValue=items.reduce((s,i)=>s+(Number(i.stock||0)*Number(i.perUnit||0)),0);
+      const totalLoss=filteredWastage.reduce((s,w)=>s+(w.loss||0),0);
+      const totalGRNSpend=filteredGRN.reduce((s,g)=>s+(g.total||0),0);
+      const lines=[
+        `Period: ${startDate} to ${endDate}`,
+        ``,
+        `SUMMARY`,
+        `Stock Movements: ${filteredMovements.length} (${filteredMovements.filter(m=>m.type==="out").length} out, ${filteredMovements.filter(m=>m.type==="in").length} in)`,
+        `GRN Spend: Rs ${Math.round(totalGRNSpend).toLocaleString()}`,
+        `Wastage Loss: Rs ${Math.round(totalLoss).toLocaleString()}`,
+        `Total Stock Value: Rs ${Math.round(totalValue).toLocaleString()}`,
+        ``,
+        `TOP 10 STOCK VALUE ITEMS`,
+        ...[...items].sort((a,b)=>(Number(b.stock||0)*Number(b.perUnit||0))-(Number(a.stock||0)*Number(a.perUnit||0))).slice(0,10).map(i=>`  ${i.name}: Rs ${Math.round(Number(i.stock||0)*Number(i.perUnit||0)).toLocaleString()}`),
+      ].join("\n");
+
+      const resp=await fetch("/api/send-alert",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          to1:emailTo,
+          count:filteredMovements.length,
+          lines,
+          timestamp:nowStr(),
+          subject:`Hazel Inventory Report — ${startDate} to ${endDate}`,
+        }),
+      });
+      if(!resp.ok) throw new Error("Server error");
+      setEmailSent(true);setTimeout(()=>setEmailSent(false),4000);
+    }catch(e){setEmailError("Failed: "+e.message);}
+    setEmailSending(false);
+  };
+
+  const totalSelected=Object.values(selected).filter(Boolean).length;
+
+  return(
+    <div>
+      <div style={{fontSize:22,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:4}}>Data Export</div>
+      <div style={{fontSize:12,color:T.muted,fontFamily:MO,marginBottom:20}}>Export inventory data for accounting, auditing or reporting purposes</div>
+
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16}}>
+        {/* Date range + data selection */}
+        <Card T={T} s={{padding:20}}>
+          <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:14}}>📅 Date Range</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+            <div><Label T={T}>From</Label><input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={{...{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:13,padding:"9px 12px",width:"100%",boxSizing:"border-box",fontFamily:MO,outline:"none"}}}/></div>
+            <div><Label T={T}>To</Label><input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} style={{...{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:13,padding:"9px 12px",width:"100%",boxSizing:"border-box",fontFamily:MO,outline:"none"}}}/></div>
+          </div>
+
+          <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:10}}>📊 Include in Export</div>
+          {[
+            {k:"stockValue",label:"Current Stock Value",count:`${items.length} items`,icon:"📦"},
+            {k:"movements",label:"Stock Movements",count:`${filteredMovements.length} records`,icon:"📈"},
+            {k:"grn",label:"GRN / Purchase Records",count:`${filteredGRN.length} records`,icon:"📋"},
+            {k:"wastage",label:"Wastage Records",count:`${filteredWastage.length} records`,icon:"🗑️"},
+          ].map(({k,label,count,icon})=>(
+            <button key={k} onClick={()=>toggle(k)}
+              style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:8,border:`1px solid ${selected[k]?T.ok:T.border}`,background:selected[k]?T.okBg:T.card,cursor:"pointer",marginBottom:6,textAlign:"left"}}>
+              <div style={{width:16,height:16,borderRadius:4,background:selected[k]?T.ok:T.border,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                {selected[k]&&<span style={{fontSize:10,color:"#fff",fontWeight:900}}>✓</span>}
+              </div>
+              <span style={{fontSize:13,color:T.text,fontFamily:SE,flex:1}}>{icon} {label}</span>
+              <span style={{fontSize:10,color:T.muted,fontFamily:MO}}>{count}</span>
+            </button>
+          ))}
+        </Card>
+
+        {/* Export actions */}
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {/* CSV Export */}
+          <Card T={T} s={{padding:20}}>
+            <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:6}}>📄 Export as CSV</div>
+            <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:14,lineHeight:1.6}}>Downloads separate CSV files for each selected dataset. Open in Excel or Google Sheets.</div>
+            <Btn T={T} v="primary" onClick={exportCSV} disabled={exporting||totalSelected===0} s={{width:"100%",padding:"12px"}}>
+              {exporting?"⏳ Exporting…":"⬇ Download CSV Files"}
+            </Btn>
+          </Card>
+
+          {/* PDF Export */}
+          <Card T={T} s={{padding:20}}>
+            <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:6}}>🖨️ Export as PDF</div>
+            <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:14,lineHeight:1.6}}>Opens a print-ready report with summary and tables. Print or save as PDF.</div>
+            <Btn T={T} onClick={exportPDF} disabled={totalSelected===0} s={{width:"100%",padding:"12px"}}>
+              🖨 Open Print View
+            </Btn>
+          </Card>
+
+          {/* Email Export */}
+          <Card T={T} s={{padding:20}}>
+            <div style={{fontSize:14,fontWeight:600,fontFamily:SE,color:T.text,marginBottom:6}}>📧 Email Report</div>
+            <div style={{fontSize:11,color:T.muted,fontFamily:MO,marginBottom:12,lineHeight:1.6}}>Send a summary report by email to accountant, auditor or management.</div>
+            <div style={{marginBottom:10}}>
+              <Label T={T}>Recipient Email</Label>
+              <Inp T={T} type="email" value={emailTo} onChange={setEmailTo} placeholder="accountant@hazelcafe.lk"/>
+            </div>
+            {emailError&&<div style={{fontSize:11,color:T.low,fontFamily:MO,marginBottom:8}}>{emailError}</div>}
+            <Btn T={T} v="primary" onClick={sendEmail} disabled={emailSending||emailSent||!emailTo||totalSelected===0} s={{width:"100%",padding:"12px"}}>
+              {emailSent?"✓ Sent!":emailSending?"Sending…":"📧 Send Report Email"}
+            </Btn>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── AUDIT LOG ────────────────────────────────────────────────────────────────
 function recordAudit(setAuditLog, action, module, itemName, user, before, after){
   // FIX 2: was skipping admin — now ALL roles are logged for full audit trail
@@ -4355,7 +4768,7 @@ function ModuleSelector({T,isDark,onToggle,currentUser,onSelect,onLogout,items,m
       // All roles can access GRN — staff/counter submit, admin/supervisor create
       roles:["admin","supervisor","counter","staff"],
       shortcuts:[{label:"New GRN",icon:"📋",tab:"new"}]},
-  ].filter(m=>m.roles.includes(role));
+  ].filter(m=>m.roles.includes(role)&&canAccessModule(currentUser,m.id));
   const [hovered,setHovered]=useState(null);
   return(
     <div style={{minHeight:"100vh",background:T.bg,fontFamily:SE,transition:"background 0.25s"}}>
@@ -4667,8 +5080,9 @@ export default function App(){
   );
 
   const role=ROLES[currentUser.role];
-  const allowedTabs=ALL_TABS.filter(t=>role.tabs.includes(t.key));
-  const safeTab=role.tabs.includes(tab)?tab:role.tabs[0];
+  // Custom access: merge role defaults with per-user overrides
+  const allowedTabs=ALL_TABS.filter(t=>getEffectiveTabs(currentUser).includes(t.key));
+  const safeTab=getEffectiveTabs(currentUser).includes(tab)?tab:getEffectiveTabs(currentUser)[0];
   const deficit=items.filter(i=>i.stock<i.minQty).length;
   const empty=items.filter(i=>i.stock<=0).length;
 
@@ -4708,17 +5122,18 @@ export default function App(){
         {alertBanner.length>0&&(currentUser.role==="admin"||currentUser.role==="supervisor")&&<LowStockAlertBanner T={T} alertItems={alertBanner} alertSettings={alertSettings} onDismiss={()=>setAlertBanner([])} onConfigure={()=>setShowAlertSettings(true)}/>}
         {safeTab==="out"  &&<MovementTab T={T} type="out" items={items} movements={movements} setMovements={setMovements} setItems={setItems} currentUser={currentUser}/>}
         {safeTab==="in"   &&<MovementTab T={T} type="in"  items={items} movements={movements} setMovements={setMovements} setItems={setItems} currentUser={currentUser}/>}
-        {safeTab==="inv"  &&<InventoryTab T={T} items={items} setItems={setItems} canEdit={role.canEditItems} setAuditLog={setAuditLog} currentUser={currentUser}/>}
+        {safeTab==="inv"  &&<InventoryTab T={T} items={items} setItems={setItems} canEdit={currentUser.customAccess?.canEditItems??role.canEditItems} setAuditLog={setAuditLog} currentUser={currentUser}/>}
         {safeTab==="count"&&<ManualCountTab T={T} items={items} setItems={setItems} countHistory={countHistory} setCountHistory={setCountHistory} currentUser={currentUser} onCountSubmit={()=>{alertedRef.current.clear();localStorage.removeItem("alertedIds");setAlertBanner([]);}}/>}
         {safeTab==="var"  &&<VarianceTab T={T} countHistory={countHistory}/>}
         {safeTab==="po"   &&<PurchaseOrderTab T={T} items={items} alertSettings={alertSettings} onConfigure={()=>setShowAlertSettings(true)}/>}
         {safeTab==="hist" &&<HistoryTab T={T} movements={movements} currentUser={currentUser}/>}
         {safeTab==="reports"&&<ReportsTab T={T} movements={movements} countHistory={countHistory}/>}
-        {safeTab==="users"&&<UsersTab T={T} users={users} setUsers={setUsers}/>}
+        {safeTab==="users"&&<UsersTab T={T} users={users} setUsers={setUsers} currentUser={currentUser}/>}
         {safeTab==="devices"&&<DevicesTab T={T} devices={devices} setDevices={setDevices} loginHistory={loginHistory}/>}
         {safeTab==="audit"&&<AuditLogTab T={T} auditLog={auditLog} isMobile={isMobile}/>
         }
         {safeTab==="value"&&<StockValueTab T={T} items={items} isMobile={isMobile}/>}
+        {safeTab==="export"&&<ExportTab T={T} items={items} movements={movements} grnLog={grnLog} wastageLog={wastageLog} countHistory={countHistory} alertSettings={alertSettings} currentUser={currentUser}/>}
       </div>
       {isMobile&&(<div style={{position:"fixed",bottom:0,left:0,right:0,background:T.navBg,borderTop:`1px solid ${T.navBorder}`,display:"flex",zIndex:100,overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch",scrollSnapType:"x mandatory"}}><style>{`.mobile-tab-scroll::-webkit-scrollbar{display:none}`}</style>{allowedTabs.map(t=>{const c=tabColor(t.key,T);const active=safeTab===t.key;return(<button key={t.key} onClick={()=>setTab(t.key)} style={{flexShrink:0,minWidth:60,padding:"9px 6px 7px",border:"none",background:active?c+"15":"transparent",color:active?c:T.muted,cursor:"pointer",fontFamily:MO,display:"flex",flexDirection:"column",alignItems:"center",gap:2,borderTop:active?`2px solid ${c}`:`2px solid transparent`,scrollSnapAlign:"start",transition:"all 0.15s"}}><span style={{fontSize:16,lineHeight:1}}>{t.icon}</span><span style={{fontSize:8,fontWeight:700,whiteSpace:"nowrap"}}>{t.label}</span></button>);})}</div>)}
       {showAlertSettings&&<AlertSettingsModal T={T} settings={alertSettings} onClose={()=>setShowAlertSettings(false)} onSave={s=>{setAlertSettings(s);setShowAlertSettings(false);}}/> }
