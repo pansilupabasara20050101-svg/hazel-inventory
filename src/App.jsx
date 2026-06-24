@@ -1406,13 +1406,13 @@ function ReportsTab({T,movements,countHistory}){
   const summaryStats=useMemo(()=>{
     let totalOut=0,totalIn=0;
     const itemSet=new Set(),peopleSet=new Set();
-    for(const m of filtered){
+    for(const m of filteredMov){
       if(m.type==="out") totalOut++; else totalIn++;
       itemSet.add(m.code);
       if(m.personName) peopleSet.add(m.personName);
     }
     return{totalOut,totalIn,uniqueItems:itemSet.size,uniquePeople:peopleSet.size};
-  },[filtered]);
+  },[filteredMov]);
   const{totalOut,totalIn,uniqueItems,uniquePeople}=summaryStats;
 
   const topItems=useMemo(()=>{
@@ -1430,12 +1430,12 @@ function ReportsTab({T,movements,countHistory}){
 
   const deptStats=useMemo(()=>{
     const r={front:{out:0,in:0},kitchen:{out:0,in:0}};
-    for(const m of filtered){
+    for(const m of filteredMov){
       const bucket=m.dept==="Front"?"front":"kitchen";
       if(m.type==="out") r[bucket].out++; else r[bucket].in++;
     }
     return r;
-  },[filtered]);
+  },[filteredMov]);
 
   const navBtn=(key,label,icon)=>{const active=activeSection===key;return(<button onClick={()=>setActiveSection(key)} style={{padding:"7px 14px",borderRadius:7,border:`1px solid ${active?T.accent:T.border}`,background:active?T.accentDim:"transparent",color:active?T.accent:T.muted,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:MO,whiteSpace:"nowrap"}}>{icon} {label}</button>);};
 
@@ -1951,17 +1951,20 @@ function DevicesTab({T,devices,setDevices,loginHistory}){
 
   useEffect(()=>{
     const fp=getDeviceFingerprint();
-    const exists=devices.find(d=>d.fingerprint===fp);
-    if(!exists){
-      setDevices(prev=>[...prev,{
+    // BUG E FIX: use functional update so we always check the LATEST devices
+    // not the stale closure value from mount time
+    setDevices(prev=>{
+      const exists=prev.find(d=>d.fingerprint===fp);
+      if(exists) return prev;// already registered — no duplicate
+      return[...prev,{
         id:fp,fingerprint:fp,
         name:"New Device (tap Edit to name)",
         location:"Unknown",
         active:true,
         registeredAt:nowStr(),
         pending:true,
-      }]);
-    }
+      }];
+    });
   },[]);
 
   const thisFingerprint=getDeviceFingerprint();
@@ -2426,15 +2429,33 @@ function GlassTransferModal({T,items,onClose,onSave}){
               <div style={{flex:1}}><Label T={T}>Qty</Label><Inp T={T} type="number" value={qty} onChange={v=>setQty(Math.max(1,Number(v)))}/></div>
             </div>
             <div style={{marginBottom:16}}><Label T={T}>Note (optional)</Label><Inp T={T} value={note} onChange={setNote} placeholder="Reason for transfer"/></div>
-            <div style={{background:T.accentDim,border:`1px solid ${T.accent}44`,borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,fontFamily:MO,color:T.accent}}>
-              {direction==="ktof"?`Kitchen ${selected.kitchenQty}→${selected.kitchenQty-qty} · Front ${selected.frontQty}→${selected.frontQty+qty}`:`Front ${selected.frontQty}→${selected.frontQty-qty} · Kitchen ${selected.kitchenQty}→${selected.kitchenQty+qty}`}
-            </div>
+            {/* BUG H FIX: validate qty against source stock before allowing transfer */}
+            {(()=>{
+              const sourceQty=direction==="ktof"?selected.kitchenQty:selected.frontQty;
+              const willGoNegative=qty>sourceQty;
+              const newKitchen=direction==="ktof"?selected.kitchenQty-qty:selected.kitchenQty+qty;
+              const newFront=direction==="ktof"?selected.frontQty+qty:selected.frontQty-qty;
+              return(
+                <>
+                  <div style={{background:willGoNegative?T.lowBg:T.accentDim,border:`1px solid ${willGoNegative?T.low:T.accent}44`,borderRadius:8,padding:"10px 14px",marginBottom:willGoNegative?8:16,fontSize:12,fontFamily:MO,color:willGoNegative?T.low:T.accent}}>
+                    {direction==="ktof"?`Kitchen ${selected.kitchenQty}→${newKitchen} · Front ${selected.frontQty}→${newFront}`:`Front ${selected.frontQty}→${newFront} · Kitchen ${selected.kitchenQty}→${newKitchen}`}
+                  </div>
+                  {willGoNegative&&<div style={{background:T.lowBg,border:`1px solid ${T.low}44`,borderRadius:8,padding:"8px 12px",marginBottom:16,fontSize:11,color:T.low,fontFamily:MO}}>⚠ Only {sourceQty} available in {direction==="ktof"?"Kitchen":"Front"} — reduce qty</div>}
+                  <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                    <Btn T={T} onClick={onClose}>Cancel</Btn>
+                    <Btn T={T} v="primary" onClick={()=>{if(selected) onSave(selected,qty,direction,note);}} disabled={!selected||qty<1||willGoNegative}>Confirm Transfer</Btn>
+                  </div>
+                </>
+              );
+            })()}
           </>
         )}
-        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-          <Btn T={T} onClick={onClose}>Cancel</Btn>
-          <Btn T={T} v="primary" onClick={()=>{if(selected) onSave(selected,qty,direction,note);}} disabled={!selected||qty<1}>Confirm Transfer</Btn>
-        </div>
+        {!selected&&(
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <Btn T={T} onClick={onClose}>Cancel</Btn>
+            <Btn T={T} v="primary" disabled={true}>Confirm Transfer</Btn>
+          </div>
+        )}
       </Card>
     </div>
   );
@@ -4840,7 +4861,11 @@ function ModuleSelector({T,isDark,onToggle,currentUser,onSelect,onLogout,items,m
 
 export default function App(){
   const isMobile=useIsMobile();
-  const [isDark,setIsDark]=useState(false);
+  // BUG I FIX: read stored theme synchronously to avoid light→dark flicker on load
+  const [isDark,setIsDark]=useState(()=>{
+    try{const t=localStorage.getItem("hazel_theme");if(t!==null) return t==="dark";}catch{}
+    return false;
+  });
   const T=isDark?DARK:LIGHT;
   const [currentUser,setCurrentUser]=useState(null);
   const [tab,setTab]=useState("out");
@@ -4871,11 +4896,14 @@ export default function App(){
 
   // Browser back button support
   const activeModuleRef=useRef(null);
+  const currentUserRef=useRef(null);// BUG D FIX: ref so popstate always sees latest user
   useEffect(()=>{activeModuleRef.current=activeModule;},[activeModule]);
+  useEffect(()=>{currentUserRef.current=currentUser;},[currentUser]);
   useEffect(()=>{
     const handlePopState=(e)=>{
       if(activeModuleRef.current){setActiveModule(null);}
-      else if(currentUser){setCurrentUser(null);setTab("out");setAlertBanner([]);alertedRef.current.clear();}
+      // BUG D FIX: was using stale closure currentUser (always null at mount)
+      else if(currentUserRef.current){setCurrentUser(null);setTab("out");setAlertBanner([]);alertedRef.current.clear();}
     };
     window.addEventListener("popstate",handlePopState);
     return()=>window.removeEventListener("popstate",handlePopState);
@@ -4918,12 +4946,19 @@ export default function App(){
   // FIX: persist glassItems at root level so both GlasswareModule and GRNModule share same data
   useFirebasePersist("glassItems",glassItems,ready);
   useFirebasePersist("glassMov",glassMov,ready);
+  // BUG C FIX: grnLog and wastageLog were lifted to root but never persisted — dashboard showed Rs 0 on refresh
+  useFirebasePersist("grnLog",grnLog,ready);
+  useFirebasePersist("wastageLog",wastageLog,ready);
   useFirebasePersist("users",users,ready);
   useFirebasePersist("devices",devices,ready);
   useFirebasePersist("loginHistory",loginHistory,ready);
   useFirebasePersist("auditLog",auditLog,ready);
   useFirebasePersist("alertSettings",alertSettings,ready);
+  // Sync theme to Firebase AND localStorage (localStorage enables flicker-free init)
   useFirebasePersist("theme",isDark,ready);
+  useEffect(()=>{
+    try{localStorage.setItem("hazel_theme",isDark?"dark":"light");}catch{}
+  },[isDark]);
 
   // ── Real-time sync via Firestore onSnapshot ───────────────────────────────
   useEffect(()=>{
